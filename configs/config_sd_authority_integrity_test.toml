@@ -1,0 +1,88 @@
+# Root and Rustlet child share keys to test authority independently of key separation.
+[secure_channel]
+protocols = ["SCP03"]
+scp03_profile = "S8"
+
+[root.package]
+name = "KernelSecurityDomain"
+aid = "A0:00:00:47:50:4F:53:01"
+[root.instance]
+aid = "A0:00:00:47:50:4F:53:01"
+install_bytes = "FF:FF:FF"
+
+[[root.keys]]
+type = "Scp03Static"
+version = 1
+id = 3
+usage = "Enc"
+material = "40:41:42:43:44:45:46:47:48:49:4A:4B:4C:4D:4E:4F"
+
+[[root.keys]]
+type = "Scp03Static"
+version = 1
+id = 3
+usage = "Mac"
+material = "50:51:52:53:54:55:56:57:58:59:5A:5B:5C:5D:5E:5F"
+
+[[root.packages]]
+path = "./rustlets/tests/minimal_valid_test"
+
+# Deliberately declare the grandchild first: the build orders the hierarchy.
+[[security_domains]]
+[security_domains.parent]
+aid = "A0:00:00:47:50:4F:53:03"
+[security_domains.package]
+name = "KernelSecurityDomain"
+aid = "A0:00:00:47:50:4F:53:01"
+[security_domains.instance]
+aid = "A0:00:00:47:50:4F:53:05"
+install_bytes = "FF:FF:FF"
+# No explicit keys: inherit the child's overrides, not the root's keys.
+
+[[security_domains]]
+[security_domains.parent]
+aid = "A0:00:00:47:50:4F:53:01"
+[security_domains.package]
+name = "KernelSecurityDomain"
+aid = "A0:00:00:47:50:4F:53:01"
+[security_domains.instance]
+aid = "A0:00:00:47:50:4F:53:03"
+install_bytes = "FF:FF:FF"
+
+[[security_domains.keys]]
+type = "Scp03Static"
+version = 1
+id = 3
+usage = "Enc"
+material = "60:61:62:63:64:65:66:67:68:69:6A:6B:6C:6D:6E:6F"
+[[security_domains.keys]]
+type = "Scp03Static"
+version = 1
+id = 3
+usage = "Mac"
+material = "70:71:72:73:74:75:76:77:78:79:7A:7B:7C:7D:7E:7F"
+
+[[security_domains]]
+role = "supplementary"
+[security_domains.parent]
+aid = "A0:00:00:47:50:4F:53:01"
+[security_domains.package]
+path = "./rustlets/complete_security_domain"
+aid = "A0:00:00:47:50:4F:53:06"
+[security_domains.instance]
+aid = "A0:00:00:47:50:4F:53:04"
+install_bytes = "FF:FF:FF"
+
+[[security_domains.keys]]
+type = "Scp03Static"
+version = 1
+id = 3
+usage = "Enc"
+material = "40:41:42:43:44:45:46:47:48:49:4A:4B:4C:4D:4E:4F"
+
+[[security_domains.keys]]
+type = "Scp03Static"
+version = 1
+id = 3
+usage = "Mac"
+material = "50:51:52:53:54:55:56:57:58:59:5A:5B:5C:5D:5E:5F"

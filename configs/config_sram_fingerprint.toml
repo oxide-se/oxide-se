@@ -1,0 +1,4 @@
+# Dedicated SRAM4 repeatability experiment; not a production image.
+[kernel-image]
+mode = "kernel-only"
+kernel-app-modules = ["sram-fingerprint"]

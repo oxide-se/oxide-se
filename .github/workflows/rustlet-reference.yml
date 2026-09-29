@@ -1,0 +1,31 @@
+name: Rustlet API reference
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the repository toolchain
+        run: rustup show
+      - name: Check and build the reference
+        env:
+          REFERENCE_REVISION: ${{ github.sha }}
+          REFERENCE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: sh scripts/check_rustlet_docs.sh "${REFERENCE_TAG:-$REFERENCE_REVISION}"
+      - name: Save the versioned static site
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustlet-reference-${{ github.sha }}
+          path: target/rustlet-reference/site.*/
+          include-hidden-files: true
+          if-no-files-found: error

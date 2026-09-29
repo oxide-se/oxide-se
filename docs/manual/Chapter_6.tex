@@ -1,0 +1,468 @@
+\chapter{Registry and Transactional State Management}
+\label{chap:registry-persistence}
+
+The registry connects the GlobalPlatform management model to the persistent
+state of oXiDe SE. Its architectural role is to determine which objects and
+which versions of their state belong to the secure element at an observable
+command boundary. Writing an object into persistent memory is not sufficient
+to make that object part of this state: it must also be reachable through the
+committed Registry index.
+
+This chapter summarizes the relevant GlobalPlatform requirements and explains
+how the oXiDe SE architecture can satisfy them. It defines the contract for
+command execution, publication and recovery. Chapter~8 relates these
+architectural mechanisms to the effective implementation.
+
+%--------------------------------------------------
+\section{GlobalPlatform Requirements Considered}
+\label{sec:gp-registry-transaction-requirements}
+
+OPEN maintains the GlobalPlatform Registry. Applications, including Security
+Domains, and Executable Load Files require entries. The Registry holds
+identity, association, privilege, lifecycle, resource and card-wide management
+information. Its physical storage format is not prescribed
+\gpref{gp-card}{§6.5}.
+
+Completion and atomicity must be read at the boundary specified for each
+operation:
+\begin{itemize}
+\item Loading, installation and Registry Update have process-specific
+  completion rules. A sequence of commands is not, merely by being a
+  sequence, one indivisible transaction \gpref{gp-card}{§9.3--§9.4}.
+\item \texttt{PUT KEY} explicitly requires atomic handling of multiple keys
+  or components in its data field, and of components transferred through a
+  chain ending with the command that clears the continuation bit
+  \gpref{gp-card}{§11.8.2.3.3}.
+\item Deletion must not start if verification fails. Once started, it must
+  complete in the current session or, after interruption, at least its
+  Registry updates must complete in a subsequent session. The deletion
+  response marks completion \gpref{gp-card}{§9.5--§9.5.4}.
+\end{itemize}
+
+These requirements distinguish atomic modification, process completion and
+completion after interruption. The architecture must express all three,
+without imposing one transaction boundary on every management command.
+
+%--------------------------------------------------
+\section{Logical Registry and Authority}
+\label{sec:registry-logical-contract}
+
+The oXiDe SE registry is one kernel-owned catalogue. Security Domains define
+administrative authority and visibility over its objects; they do not maintain
+independent authoritative registries. Its public management projection covers
+packages, applications and Security Domains. Internally, the catalogue also
+includes keys, data and serialized Rustlet state, so their changes can be
+committed together. This internal extension does not turn every stored object
+into a publicly enumerable GlobalPlatform Registry entry.
+
+A logical entry identifies an object, its kind, its parent Security Domain
+and its payload. The payload provides the kind-specific information:
+\begin{itemize}
+\item a package designates executable content;
+\item an instance binds application state to a package;
+\item a Security Domain combines its administrative state and authority
+  attributes with its executable binding where applicable;
+\item a key or data object holds content managed under its owning authority.
+\end{itemize}
+
+\subsection{Management Views}
+\label{subsec:registry-get-store-data-fallback}
+
+Management commands observe authorized projections of this catalogue.
+\texttt{GET STATUS} describes managed Card Content, not private key values or
+arbitrary application data. Data access remains subject to the owning
+Security Domain's authority and interpretation: storing a generic data object
+must not override administrative information derived from the platform or
+Security Domain state.
+
+The same visibility rules apply before and after a mutation. Transactional
+publication changes the committed state; it does not grant a new way to bypass
+authority checks or to discover tentative objects.
+
+%--------------------------------------------------
+\section{Registry Index and Versioned Persistent Objects}
+\label{sec:persistence-memory-model}
+\label{sec:append-only-transactional-registry}
+\label{subsec:persistence-block-families}
+
+The architecture separates the \emph{Registry index}, which identifies a
+coherent set of entries and references, from their persistent payloads.
+Executable content forms a Code entry; generic values and key material form
+Data entries; serialized application or Security Domain state forms a
+Registry-instance state entry. These names express logical roles, independent
+of a particular binary encoding.
+
+Let $R$ be a committed Registry index and let $G(R)$ denote the state obtained
+by following its references. A modification prepares replacement payloads in
+new storage and adjusts a working index in RAM. Existing payloads reachable
+from $R$ remain intact. The working index may therefore refer to both
+unchanged payloads and newly prepared versions.
+
+The essential distinction is between \emph{physical persistence} and
+\emph{logical commitment}. A replacement payload can already be written in
+flash while remaining absent from $G(R)$. Neither ordinary object lookup nor
+recovery may promote it to committed state merely because its bytes exist.
+This separation permits incremental preparation without incremental exposure
+of the operation's effects.
+
+Publication establishes a replacement index $R'$ only after all the payloads
+it requires are persistent and valid. Recovery must recognize a complete
+publication, reject an incomplete one and preserve an unambiguous ordering of
+committed versions. These are requirements on the persistent representation;
+its encoding and validation mechanism belong to Chapter~8.
+
+\subsection{Preservation and Reclamation}
+\label{subsec:persistence-recycling-rule}
+
+Until $R'$ is committed, $R$ and every payload needed to reconstruct $G(R)$
+remain protected from reclamation. New payloads needed by the pending
+operation must also remain protected. After commitment, payloads that no
+longer belong to any required committed or pending state may be reclaimed.
+The protection boundary must respect the storage medium's erase granularity.
+
+This rule applies to an arbitrary set of changed entries. Updating an instance
+and an associated data object, or deleting an entire authorized dependency
+set, does not require separate publications. Unchanged payloads can be shared
+between versions. Space exhaustion must prevent commitment of an incomplete
+replacement rather than destroy the previous committed state.
+
+%--------------------------------------------------
+\section{One APDU as an Observable State Transition}
+\label{sec:registry-architectural-requirements}
+\label{subsec:persistence-commit-rule}
+
+For the command/response execution model considered here, application activity
+starts with receipt of a command and ends with transmission of its response.
+There is no background application process advancing between two APDUs.
+The external functional observer sees responses and the behavior of later
+commands, including commands issued after a reset. Internal execution steps
+need not each expose a separately consistent registry.
+
+The architectural unit of commitment for an ordinary modifying APDU includes
+\emph{all} its persistent effects: changes requested through kernel services,
+changes to other managed objects and the final serialized state of the
+Rustlet. A service invoked during execution participates in the current
+command's working state; it does not publish an independent Registry index.
+
+The command boundary is organized as follows:
+\begin{enumerate}
+\item The kernel resolves the authorized objects from the committed state and
+  restores the Rustlet state needed for execution.
+\item During execution, mutations affect the working registry and prepare new
+  payload versions. Later accesses within the same command may use this
+  working state, under the same authority checks.
+\item After application processing returns, the kernel serializes the final
+  Rustlet state and includes it with every other persistent effect selected
+  by the command's outcome in the replacement index.
+\item Once the complete replacement is ready, the kernel publishes it and
+  makes the subsequent command's working view agree with that committed
+  state. A response asserting successful completion follows commitment.
+\end{enumerate}
+
+Returning from application processing is therefore not itself the commit
+point. Final serialization and publication are still part of the command's
+completion. A read-only command need not publish an unchanged state. An error
+response follows its own specified state transition: it may legitimately
+retain an explicitly defined effect, but must not accidentally retain an
+arbitrary prefix of unsuccessful processing. If a proposed mutation is
+abandoned, its tentative RAM view must not be reused by a later command as
+though it had committed.
+
+\subsection{Why Internal Mutations Remain Unobservable}
+
+Suppose a Rustlet changes a Data entry from $D_0$ to $D_1$ and its own
+serialized state from $S_0$ to $S_1$. The old index designates $(D_0,S_0)$.
+During execution, new storage may already contain $D_1$, while $S_1$ has not
+yet been serialized. That physical situation does not change the committed
+pair. The new index is published only when it can designate $(D_1,S_1)$.
+
+\begin{center}
+\begin{tabular}{|p{5.8cm}|p{7cm}|}
+\hline
+\textbf{Interruption point} & \textbf{State available after recovery} \\
+\hline
+During execution or final serialization &
+The old pair $(D_0,S_0)$. Prepared payloads do not confer visibility. \\
+\hline
+During index publication &
+Either $(D_0,S_0)$ or $(D_1,S_1)$, according to whether the replacement
+publication is complete and valid. \\
+\hline
+After commitment, including during response transmission &
+The new pair $(D_1,S_1)$, even if the host did not receive the full response. \\
+\hline
+\end{tabular}
+\end{center}
+
+The partial pair $(D_1,S_0)$ is not a recoverable outcome of this operation.
+Thus a sequence of internal mutations can be understood as one abstract
+transition at an APDU observation boundary. Loss of a response does not prove
+absence of commitment; it creates uncertainty for the host about which
+complete transition occurred, not permission to expose a partial transition.
+
+This reasoning depends on all persistent effects using the common publication
+boundary. Effects outside that boundary would need their own explicit
+composition rule. It concerns functional observations through commands and
+recovery; physical side-channel observations are outside this argument.
+
+%--------------------------------------------------
+\section{Multi-APDU Management Transactions}
+\label{sec:registry-multi-apdu}
+
+The oXiDe SE architecture explicitly handles two cases of multi-APDU
+management transactions:
+\begin{enumerate}
+\item \textbf{Key loading through chained \texttt{PUT KEY} commands.}
+  The kernel collects the key components covered by the operation and
+  activates the complete result together. Multiple keys or components carried
+  in a single command use the same atomic publication principle, but do not
+  themselves constitute a multi-APDU sequence.
+\item \textbf{Package loading through \texttt{INSTALL [for load]} followed by
+  several \texttt{LOAD} commands.} The kernel prepares the executable content
+  incrementally and publishes the package only when the final transfer and
+  validation are complete.
+\end{enumerate}
+
+These are explicit management operations with command-specific control of
+Registry index publication. Their architectural treatment does not require a
+general transaction that a Rustlet can open in one APDU and commit in another.
+GlobalPlatform Card Specification~2.3.1 defines no generic management APDUs
+for bracketing arbitrary application commands with \texttt{BEGIN TRANSACTION}
+and \texttt{COMMIT TRANSACTION} \gpref{gp-card}{§11}.
+
+\subsection{Preparation and Atomic Activation}
+
+Each APDU terminates with its own response. The kernel retains a
+\emph{preparation state} for the next command; no process continues running
+between commands. An intermediate response acknowledges progress, without
+making the pending result operational. The architecture separates:
+\begin{itemize}
+\item committed operational objects, used by ordinary management and
+  application requests;
+\item pending payloads and the preparation context, reserved for authorized
+  continuation of the management operation.
+\end{itemize}
+
+During key replacement, the old key remains the operational key at
+intermediate response boundaries; a newly created key remains unavailable
+until complete. The final command validates the full result, replaces the
+operational references and discharges the preparation context in one
+publication. No intermediate command independently activates a subset of the
+key material covered by the operation.
+
+The context identifies the operation, target, authority and expected progress.
+Continuation commands are checked against it. Other commands, where permitted,
+must neither use nor accidentally activate the tentative result. Final
+publication must preserve any intervening committed changes or reject a
+conflicting continuation, rather than publish a stale registry view.
+
+\subsection{Package Loading}
+\label{subsec:persistence-dynamic-package-loading}
+
+\texttt{INSTALL [for load]} establishes the authorized preparation of a
+package. Successive \texttt{LOAD} commands contribute portions of its Code
+entry. Their responses confirm transfer progress; the committed operational
+registry does not yet expose the package as available for installation or
+execution. Persisting those portions does not give them execution authority.
+
+The last \texttt{LOAD} completes the input. Once the whole executable content
+has been validated, the kernel publishes the package reference in the Registry
+index before acknowledging successful completion. An interruption before this
+commitment leaves the package absent from the operational catalogue, even
+though some or all of its bytes may already be persistent. Installation of an
+instance and subsequent lifecycle changes have their own completion
+boundaries; they are not implicitly part of this loading transaction.
+
+\subsection{Persistence of Preparation State}
+
+Where interruption permits abandonment, the kernel can retain preparation in
+RAM and leave new payloads uncommitted. Reset then leaves the operational
+result unchanged. Where continuation across reset is required, an internal
+persistent preparation record can preserve progress without activating the
+pending result. Its payloads remain protected from reclamation.
+
+An intermediate index publication can therefore preserve preparation while
+still designating the old operational objects. The key property is atomic
+activation of the managed result, not the number of index versions. The
+kernel determines the appropriate preparation and publication boundaries for
+each of these two management sequences.
+
+%--------------------------------------------------
+\section{Transactional Contract for a Rustlet}
+\label{sec:registry-rustlet-transactions}
+
+A Rustlet receives atomic persistence at the APDU boundary. By completion of
+the transmission of a response acknowledging a successful state-changing
+command, its final serialized state and the associated managed-object changes
+have been committed together. The kernel performs serialization and commitment
+before that response; it does not wait until transmission has finished to
+start persisting the result. If execution or transmission is interrupted,
+recovery exposes a complete old or new state as described above.
+
+\subsection{Joint Application and Security Domain Outcomes}
+\label{subsec:registry-sd-application-outcomes}
+
+A protected APDU involves both an application and its Security Domain (SD).
+The SD processes the incoming command and protects the outgoing response;
+the application executes between these stages. The final publication decision
+is made after response production and protection, but before transmission.
+An application returning normally is therefore necessary but not sufficient
+for committing its changes.
+
+The following matrix specifies the persistent versions selected at that
+boundary, assuming successful serialization and persistence. ``Previous''
+means the version committed before this APDU, not before the secure channel
+was established. ``Updated SD'' includes only legitimate protocol evolution.
+
+\begin{center}
+\begin{tabular}{llll}
+\hline
+SD crash & Application crash & SD state & Application state \\
+\hline
+No  & No  & Updated  & Updated \\
+No  & Yes & Updated  & Previous \\
+Yes & No  & Previous & Previous \\
+Yes & Yes & Previous & Previous \\
+\hline
+\end{tabular}
+\end{center}
+
+There is one Registry index publication, not separate commits for the SD and
+application. In the second row, that index combines valid SD evolution with
+the previous application state. The application's tentative managed-object
+mutations are abandoned together with its serialized state. The healthy SD
+may protect the application-error response and continue its secure channel.
+Rolling back legitimate protocol counters or chaining state merely because
+the application crashed would not implement this contract.
+
+An SD crash instead invalidates the complete APDU transition: neither
+participant's tentative persistent changes may be published. Its channel is
+closed and its volatile session is discarded. In particular, a crash while
+protecting a successfully produced application response must still abandon
+the application's staged changes. Both participants can crash if the SD fails
+while protecting the application's crash response. If the SD crashes during
+incoming processing, the application need not have executed at all. No
+plaintext or partially protected response payload is emitted after an SD
+crash; only the failure status may be returned without protection.
+
+Internal restoration points do not constitute publication boundaries. A
+successful later stage cannot revoke a previously established global abort.
+However, an application-local abort does not by itself invalidate legitimate
+SD protocol progress. A normally returned error status is distinct from a
+crash and follows the operation's specified state-transition policy.
+
+An unchanged selected state requires no new index publication. Serialization
+or persistence failure must not expose a partially committed participant
+set. These are atomicity and outcome-selection requirements; the matrix does
+not by itself assert the complete set of database ACID properties.
+
+\subsection{No Independent Intra-APDU Persistence Transaction}
+
+The Rustlet's state is not serialized during application processing. Its
+intermediate mutations belong to the working state of the current command,
+and service-requested object mutations share that same publication boundary.
+An intra-APDU transaction therefore has no independent meaning as a
+\emph{persistence transaction} in this architecture. There is no intermediate
+Rustlet state to commit separately: the APDU is the intrinsic functional
+observation boundary of oXiDe SE.
+
+A Rustlet may still save and restore temporary values, validate speculative
+computation or handle an error during execution. Such actions determine the
+final state of the command; they do not create additional externally visible
+persistence boundaries. This contract concerns atomic persistence, not an
+obligation for every error response to restore the state at command entry.
+The response and resulting state must agree with the application's specified
+behavior.
+
+\subsection{Application Protocols for Rollback Across APDUs}
+
+A Rustlet can build a protocol spanning several APDUs on top of this guarantee.
+It retains the information needed for later validation or rollback as part of
+its own serialized state. For example, its state may contain an accepted
+value, a candidate value and a protocol phase:
+\begin{enumerate}
+\item A preparation command preserves the accepted value and initializes the
+  candidate and phase. This complete preparation state is committed when the
+  command succeeds.
+\item Later commands update the candidate while preserving the accepted
+  value. Each response boundary commits a consistent protocol state.
+\item An application-defined validation command promotes the candidate to the
+  accepted value and clears the preparation state. An application-defined
+  cancellation command instead discards the candidate and keeps the accepted
+  value. Each choice is one atomic APDU transition.
+\end{enumerate}
+
+If the protocol changes working values before final validation, it must keep
+sufficient undo information to restore them. Associated object changes must
+follow the same application protocol and participate in the relevant APDU's
+common publication. Merely retaining old physical storage does not provide a
+Rustlet with a rollback facility.
+
+This rollback is a new application state transition, not a request to undo
+past Registry index publications. Already transmitted responses cannot be
+withdrawn. If intermediate results must remain unobservable, the Rustlet must
+expose only accepted values while preparation is pending. It must also define
+continuation, cancellation and repeated-request behavior after a reset or a
+lost response. Atomic persistence ensures that its saved protocol state is
+coherent at each boundary; the Rustlet defines what that state means.
+
+The model consequently requires neither a generic transaction held open
+across application commands nor an intra-APDU persistence API. The kernel owns
+the two management sequences above; the Rustlet owns any additional
+application protocol built from atomic APDU transitions.
+
+%--------------------------------------------------
+\section{Interrupted Deletion and Idempotent Recovery}
+\label{sec:registry-deletion-recovery}
+
+Atomic publication ensures that a cumulative deletion does not expose an
+arbitrary subset of its removals. Its working index removes the complete
+authorized dependency set, then publishes the resulting state together.
+However, old-or-new recovery alone does not establish eventual completion of
+an already engaged deletion.
+
+To meet that additional obligation, the architecture needs a recoverable
+engagement decision. One sufficient extension is a persistent deletion record
+that binds the authorized target set to a completion obligation. It is
+established before destructive work that cannot be abandoned. Before this
+engagement, failed validation leaves deletion unstarted; afterwards, recovery
+must retain the obligation until the required Registry effects are complete.
+
+Continuation runs during recovery or command handling, without assuming
+background activity between APDUs. It must complete the required transition
+before ordinary commands can observe an inconsistent intermediate state.
+Publishing the resulting index and discharging the completion obligation
+must form one recoverable decision. Reclamation of obsolete storage must
+preserve any information still needed for that decision.
+
+Recovery must be idempotent under repeated interruptions. Already completed
+removals remain completed; revisiting them must not fail merely because the
+object is now absent, repeat an unrelated effect or target a newly created
+object with a reused identity. The completion obligation therefore concerns
+the originally authorized objects, not a fresh interpretation of a deletion
+request against whatever objects happen to exist after restart.
+
+This requirement adds forward completion to atomic publication. It does not
+change the common Registry index mechanism: that mechanism can commit both
+an operation's recovery state and its final result at the appropriate
+boundaries.
+
+%--------------------------------------------------
+\section{Discussion: From Publication to an Observable Contract}
+
+The architectural argument is that one index selects a coherent object graph,
+while replacement payloads remain tentative until the relevant publication.
+For one APDU, that graph combines service-requested mutations with final
+Rustlet serialization. For the two multi-APDU management sequences, the kernel controls preparation
+and indivisible activation. A Rustlet can compose atomic APDU transitions
+into its own validation or rollback protocol. For an engaged
+deletion, a recoverable obligation additionally ensures forward completion.
+
+A formal model should relate these internal transitions to traces of APDU
+responses and post-recovery behavior. Its proof obligations are complete
+mediation of persistent effects, preservation of the previous committed graph,
+unambiguous publication, separation of preparation from operational state,
+and idempotent discharge of recovery obligations. These conditions explain
+why the chosen architecture supports the required transactional behavior;
+they do not constitute a completed formal proof or an assessment of the
+implementation. That assessment belongs to Chapter~8.
