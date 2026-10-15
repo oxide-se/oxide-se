@@ -1,0 +1,583 @@
+\chapter{Rustlets}
+
+This chapter describes Rustlets from the application developer point of
+view. It focuses on the functional execution model, the framework
+surface presented to Rustlet authors, and the abstract isolation
+principles enforced by the secure element.
+
+\section{General Principle}
+
+A Rustlet is an application payload compiled as an independent FAE image
+and later executed inside the secure element under kernel mediation.
+From the developer point of view, a Rustlet is not a hosted process and
+not a kernel extension. It is an application component that exposes a
+small binary interface to the kernel and that is invoked through APDU
+selection and dispatch.
+
+An installed Rustlet has an identity and a durable state in the registry.
+Selection activates an instance for command processing. The runtime owns its
+in-memory state while it is active; installation creates the initial
+persistent value, not a permanently resident Rust object.
+A code image may have several installed instances. Their identities,
+persistent values and sessions are independent.
+
+\section{Three Information Lifetimes}
+\label{sec:rustlet-state-lifetimes}
+
+The API distinguishes three contracts for retaining information:
+\emph{Persistent}, \emph{Session}, and \emph{volatile working data}.
+These contracts describe what subsequent commands may rely on. They do not
+say that every obsolete byte has already been overwritten in memory.
+Session and working data both use volatile RAM in the hardware sense; the
+term ``volatile working data'' below specifically names the third category.
+
+\subsection{Persistent: Durable Instance State}
+
+\texttt{State::persistent} contains the information that must survive the
+end of an activation, reset and power interruption once committed.
+Serde/Postcard encodes this object into the instance's registry payload.
+In-memory changes are tentative until the enclosing APDU's publication
+policy accepts them. Registry rollback restores the version selected by the
+savepoint; it does not preserve an abandoned in-memory mutation.
+A terminal fault does not delete the previously committed instance record.
+Configuration, durable counters and accepted application values belong here.
+
+\subsection{Session: Continuity During an Activation}
+
+\texttt{State::session} contains information retained across APDUs while the
+instance remains active. It is initialized from \texttt{Default}, is not
+written to the registry, and is not recovered after reset or power loss.
+Repeated selection of the same ordinary instance retains this object;
+selecting another ordinary instance ends the previous activation. Unload or
+terminal failure also ends its session. An active Security Domain remains
+resident while it serves a selected child application.
+
+An ordinary rollback preserves the \emph{current} Session while restoring
+Persistent. This is essential for a secure channel: valid command/response
+MAC chains and encryption counters must not revert merely because an
+application or management operation was rejected. The runtime may temporarily
+serialize Session into RAM to reconstruct the instance after cleaning its
+heap. This snapshot is neither flash journaling nor a durable checkpoint.
+Protocol-specific channel reset can clear session information even while the
+Security Domain remains resident.
+
+\subsection{Volatile Working Data: No Inter-APDU Retention Contract}
+
+Local variables, temporary computations, scratch buffers and APDU borrows are
+working data. Their validity follows Rust's scope and ownership rules; no
+runtime conservation guarantee extends beyond APDU processing. A local value
+can become invalid before the handler returns. Conversely, bytes may remain
+in RAM after a value is no longer valid. Such residual bytes are not a
+supported way to retain application state.
+
+Working data is neither published with Persistent nor saved with Session for
+rollback reconstruction. An application must put information needed by a
+later APDU in Session or Persistent. A field excluded from serialization is
+not thereby a session field. Working data has no recovery contract after
+reset and no state continuity across a power interruption.
+
+\subsection{Lifecycle Events and State Outcomes}
+
+The following table summarizes lifetimes. The four combinations of
+persistent rollback and session conservation or termination, their triggers,
+and the per-participant fault matrix are specified in
+Section~\ref{subsec:registry-state-transitions}. Session termination is not
+a rewind to a previous authenticated state.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{|>{\raggedright\arraybackslash}p{2.8cm}|>{\raggedright\arraybackslash}p{3.4cm}|>{\raggedright\arraybackslash}p{3.4cm}|>{\raggedright\arraybackslash}p{3.4cm}|}
+\hline
+Event & Persistent & Session & Working data \\
+\hline
+Normal APDU completion & Published according to outcome policy & Retained
+while active & No inter-APDU guarantee \\
+\hline
+Ordinary rollback & Selected version restored & Current state preserved &
+Not restored; heap cleaned for reconstruction \\
+\hline
+End of activation & Committed record retained & Logical state retired &
+No retained application state \\
+\hline
+Reset or power interruption & Committed version recovered & Fresh default
+on activation & No recovery contract \\
+\hline
+\end{tabular}
+\end{center}
+
+A normally returned error status does not automatically request a rollback.
+The operation's outcome policy decides which persistent effects are retained;
+Section~\ref{sec:registry-rustlet-transactions} specifies that decision.
+
+\subsection{Conservation Is Distinct from Memory Erasure}
+\label{subsec:rustlet-state-erasure}
+
+Ending a session means retiring its logical state: a new activation must not
+resume it. Dropping a Rust value, releasing an allocation, retiring a handle,
+and overwriting its bytes are separate operations. Likewise, volatile RAM
+is not a promise of secure erasure on power loss. Sensitive temporary data
+needs explicit cleanup at its ownership boundary; incidental RAM residence
+must never be used as either a retention or an erasure guarantee.
+
+The reference runtime scrubs the invocation stack, cleans the whole heap
+when rebuilding an instance after rollback, and scrubs the image allocation
+when unloading it. Normal APDU completion retains the resident objects; it
+does not erase the whole Rustlet RAM block. These concrete cleanup boundaries
+are described in Section~\ref{sec:impl-rustlet-runtime}. They do not promise
+to overwrite every compiler-created copy of a secret or every obsolete
+flash version. Registry publication and recycling protect durability and
+consistency; they are not a secure-deletion interface.
+
+
+\section{Framework and API}
+
+\subsection{Framework}
+
+The developer defines a handler type implementing \texttt{Rustlet}, two
+associated data types, and a declaration macro. Both data types implement
+\texttt{Default}, \texttt{Serialize} and \texttt{Deserialize}. Use
+\texttt{()} when one category has no information. The handler type itself
+need not implement Serde or Default.
+
+\begin{samepage}
+\begin{verbatim}
+impl Rustlet for MyRustlet {
+    type Persistent = MyPersistent;
+    type Session = MySession;
+
+    fn process_apdu(
+        state: &mut State<Self::Persistent, Self::Session>,
+        ctx: &mut RustletCtx,
+    ) -> ApduStatus {
+        // Use state.persistent and state.session independently.
+        Apdu::new(ctx).accept()
+    }
+}
+\end{verbatim}
+\end{samepage}
+
+The runtime owns \texttt{State<P, S>}; the container is not itself
+serializable. Only P is encoded for registry publication. S has a separate
+RAM-only encoding for rollback reconstruction. Developers do not implement
+manual state or session save/load callbacks.
+
+\begin{verbatim}
+declare_rustlet!(MyRustlet);
+declare_rustlet!(MyRustlet, 2048usize);
+declare_rustlet!(MyRustlet, 2048usize, install_custom);
+\end{verbatim}
+
+These are alternative declarations. The optional installation callback
+returns the Persistent value; the runtime initializes Session separately.
+The macro exports the FAE entry point, reserves the heap and binds the typed
+handler to the runtime adapter. A complete example of all three information
+categories appears in Appendix~\ref{app:state-examples}.
+
+The implementation of adapters, macros and the selected-context descriptor
+is described in Section~\ref{sec:impl-rustlet-runtime}.
+
+\subsection{API}
+
+The current Rustlet API is intentionally narrow and typed. The central runtime
+object is \texttt{RustletCtx}, while ordinary Rustlet code interacts with
+APDUs through the typed \texttt{Apdu<State>} interface exposed by the
+runtime.
+
+\texttt{RustletCtx} is the shared ABI region between the kernel and the
+currently executing Rustlet. It carries:
+\begin{itemize}
+\item the ABI version;
+\item the APDU header fields;
+\item the status word;
+\item one fixed-size APDU payload buffer;
+\item one fixed-size state-serialization slice;
+\item a small amount of direction and length metadata.
+\end{itemize}
+
+The current binary layout is fixed to one 512-byte shared page. It is split
+into two 256-byte halves:
+
+\begin{center}
+\begin{tabular}{|l|l|p{7.0cm}|}
+\hline
+\textbf{Offset} & \textbf{Size} & \textbf{Role} \\
+\hline
+\texttt{0x000} & \texttt{256} &
+Control and secondary buffer. On Rustlet entry this contains ABI metadata,
+APDU header/status fields, flags, the APDU data length and serialized state. \\
+\hline
+\texttt{0x100} & \texttt{256} &
+APDU payload buffer. Before outgoing mode it contains incoming command data;
+after outgoing mode it contains response data. \\
+\hline
+\end{tabular}
+\end{center}
+
+The control and secondary half currently contains:
+\begin{itemize}
+\item \texttt{abi\_version: u32};
+\item five command/status bytes, interpreted as
+  \texttt{CLA INS P1 P2 P3} on entry and \texttt{SW1 SW2 00 00 00} on return;
+\item one flags byte;
+\item one APDU data-length byte;
+\item one serialized-state length byte;
+\item \texttt{244} bytes of serialized-state storage.
+\end{itemize}
+
+Three invariants follow from this layout:
+\begin{itemize}
+\item the shared page size remains exactly \texttt{512} bytes, so the kernel
+  can map the Rustlet ABI as one small gate region;
+\item the APDU payload buffer reserves \texttt{256} bytes, but the current
+  short-APDU ABI accepts at most \texttt{255} useful payload bytes because the
+  data length is represented by one byte;
+\item the control and secondary half may be reused by kernel protocol code as
+  temporary scratch space before entering a Rustlet, but it must be reset and
+  reinitialized before Rustlet code observes the ABI page.
+\end{itemize}
+
+Its low-level functional meaning is simple:
+\begin{itemize}
+\item before outgoing mode is enabled, the payload buffer contains the
+  incoming APDU data;
+\item after outgoing mode is enabled, the same payload buffer becomes
+  the outgoing response area;
+\item at the end of processing, the Rustlet returns an
+  \texttt{ApduStatus}, while the runtime owns the corresponding
+  \texttt{SW1/SW2} staging.
+\end{itemize}
+
+However, this is \emph{not} the preferred programming model for normal
+Rustlet code. The preferred model is the typed APDU state machine:
+\begin{itemize}
+\item \texttt{Apdu<Command>}, the initial command-processing state;
+\item \texttt{Apdu<Receiving>}, after the incoming phase has been
+  accepted;
+\item \texttt{Apdu<Sending>}, after the outgoing phase has been
+  declared.
+\end{itemize}
+
+This state machine provides a more precise expression of the APDU case
+currently being processed. In practice:
+\begin{itemize}
+\item a Rustlet builds \texttt{Apdu::new(ctx)} at the beginning of
+  \texttt{process\_apdu()};
+\item it inspects the command header in the \texttt{Command} state;
+\item it moves to \texttt{Receiving} only if the command needs incoming
+  payload;
+\item it moves to \texttt{Sending} only if the command produces outgoing
+  payload.
+\end{itemize}
+
+This typed API is the Rustlet-side normalization point of the current
+framework. It is intentionally distinct from:
+\begin{itemize}
+\item the kernel transport object, which remains responsible for T=0
+  procedure bytes, \texttt{61xx}, \texttt{6Cxx}, and \texttt{GET
+  RESPONSE};
+\item the raw shared memory layout, which remains an ABI detail rather
+  than the preferred application programming model.
+\end{itemize}
+
+The Rustlet-facing API also includes:
+\begin{itemize}
+\item \texttt{ApduHeader}, which exposes the decoded command header;
+\item \texttt{ApduStatus}, which carries the result status returned to
+  the kernel;
+\item \texttt{RustletCtx}, which represents the current runtime context
+  made visible to the Rustlet;
+\item \texttt{RustletHeapRegion}, which describes the heap reservation
+  associated with the Rustlet instance;
+\item \texttt{SelectedAppDescriptor} and \texttt{SelectedAppVtable},
+  which belong to the kernel/Rustlet ABI boundary rather than to
+  everyday Rustlet business logic.
+\end{itemize}
+
+From the developer point of view, these objects define a deliberately
+small application framework:
+\begin{itemize}
+\item one shared runtime context object;
+\item one typed APDU state machine;
+\item one resident \texttt{State<P, S>} containing two distinct objects;
+\item one trait-based processing interface;
+\item one kernel-mediated crypto interface.
+\end{itemize}
+
+The effective binary layout of these objects, as well as the runtime and
+kernel-side marshalling rules, are described in Chapter~8 (Reference
+Implementation), in Section~\ref{sec:impl-rustlet-runtime}. In other
+words, the present chapter states the programming model, while
+Chapter~8 gives the underlying ABI and runtime mechanics that make this
+model concrete.
+For exact signatures, trait defaults and feature-dependent availability,
+use the generated \texttt{rustlet\_runtime} Rustdoc for the same source
+revision. The local generation and navigation procedure is documented in
+\texttt{docs/rustlet.developper.guide.md}; Security Domain authors should
+also use \texttt{docs/security.domain.developper.guide.md}. This manual
+explains the model and does not replace those API references or tutorials.
+
+\section{Security Domains Dedicated Framework and API}
+\label{sec:rustlets-security-domain-framework}
+
+A Rustlet may also be declared as a user-land Security Domain. In that
+case, it remains a normal selectable Rustlet from the APDU point of
+view, but it also exposes a dedicated Security Domain interface to the
+kernel. This is the mechanism intended to let a Rustlet implement
+GlobalPlatform administrative authority without moving all management
+logic into the kernel.
+
+In Oxide SE, Security Domains are modeled as registry objects like
+applications and load-file related objects. A Security Domain instance is
+therefore represented by an instance AID together with administrative metadata,
+rather than by a hidden side structure unrelated to the registry.
+
+The declaration macro is:
+\begin{verbatim}
+declare_security_domain!(MySecurityDomain);
+declare_security_domain!(MySecurityDomain, 2048usize);
+declare_security_domain!(MySecurityDomain, 2048usize, install_custom);
+\end{verbatim}
+
+The declared type must implement both:
+\begin{itemize}
+\item \texttt{Rustlet}, for ordinary APDU dispatch through
+  \texttt{process\_apdu()};
+\item \texttt{RustletSecurityDomain}, for Security Domain management
+  and secure-channel hooks invoked by the kernel proxy.
+\end{itemize}
+
+This dual role is deliberate. A Security Domain is, in the present
+architecture, first a Rustlet and then an administrative authority. It is
+addressable and selectable like an application, but it also carries
+management and secure-channel responsibilities. The APDU-facing side is
+used for commands explicitly routed to the Security Domain itself. The
+dedicated interface is used when the kernel needs a policy decision or
+secure-channel operation while processing platform management commands.
+
+Registry-wise, a Security Domain instance behaves like any other managed
+object: it has an instance AID, it may have a \texttt{parent\_sd\_aid}, and it
+carries a serialized administrative state. The bootstrap administrative
+authority is defined as the first Security Domain instance recorded without a
+\texttt{parent\_sd\_aid}. This instance is seeded by the kernel during
+bootstrap together with its initial privilege state.
+
+A Rustlet Security Domain uses the same \texttt{State<Persistent, Session>}
+contract as an ordinary Rustlet. Persistent holds its durable application
+policy; the runtime maintains the administrative header separately. Session
+holds derived channel keys, handshake progress, authentication state, MAC
+chains and encryption counters. Temporary decoding and cryptographic scratch
+values are volatile working data. Dedicated SD hooks receive this typed state
+just as the APDU handler does.
+
+Preserving the resident Session on repeated selection does not override SCP
+rules. A clear SELECT may terminate an authenticated channel; the channel
+reset hook must then retire its channel state even if the same SD remains
+resident. A rejected management operation with a valid channel instead
+preserves legitimate session progress while rolling back persistent effects.
+A terminal SD fault invalidates the channel and the enclosing APDU outcome.
+
+The current Rustlet-side Security Domain interface mirrors the kernel
+view of Security Domain authority. It is useful to separate it into
+several functional blocks, because this is also how GlobalPlatform
+administrative behavior is decomposed in practice:
+\begin{itemize}
+\item \textbf{application-like behavior}, still implemented through
+  \texttt{Rustlet::process\_apdu()} when the Security Domain itself is
+  selected;
+\item \textbf{management hooks}, such as
+  \texttt{install\_for\_load()},
+  \texttt{install\_for\_install()}, \texttt{delete\_aid()},
+  \texttt{get\_data()}, \texttt{may\_manage\_applet()}, and
+  \texttt{may\_make\_selectable()};
+\item \textbf{secure-channel hooks}:
+  \begin{itemize}
+  \item initialization through \texttt{initialize\_update()};
+  \item authentication through \texttt{external\_authenticate()};
+  \item session inspection through \texttt{current\_security\_level()} and
+    \texttt{secure\_channel\_open()};
+  \item MAC-length queries through \texttt{current\_mac\_len()};
+  \item teardown through \texttt{reset\_secure\_channel()}.
+  \end{itemize}
+\item \textbf{secure-messaging hooks}, namely
+  \texttt{unwrap\_command()} and \texttt{wrap\_response()}, which
+  transform protected APDUs once the secure channel is open.
+\item \textbf{privilege and key-management concerns}, which already have
+  a first place in the interface (\texttt{privileges()}) and already
+  cover one first \texttt{PUT KEY} subset, but still require richer GP
+  work such as broader keyset policy, rotation semantics, and
+  diversification.
+\end{itemize}
+
+At the current stage, the runtime already provides one common privilege
+representation for Rustlet Security Domains. It decodes the complete
+first GlobalPlatform privilege byte carried by
+\texttt{INSTALL [for install]} and therefore distinguishes, at least,
+the following privilege bits:
+\begin{itemize}
+\item Security Domain;
+\item DAP Verification;
+\item Delegated Management;
+\item Card Lock;
+\item Card Terminate;
+\item Card Reset;
+\item CVM Management;
+\item Mandated DAP Verification.
+\end{itemize}
+
+The Rustlet-side framework groups management hooks around the decoded
+privilege state. Its default policy covers loading, installation, deletion,
+applet management, and transitions to the selectable state through the
+corresponding hooks described above. These decisions can already derive a
+first policy view from the decoded privilege state. This privilege state is part of the
+standard persistent administrative state carried by a Rustlet-backed
+Security Domain instance, together with a minimal lifecycle field.
+Under the current implementation, \texttt{INSTALL [for install and make
+selectable]} initializes that lifecycle to a selectable state, and
+\texttt{GET DATA 9F70} is served from that runtime-managed administrative
+state. The second and third privilege bytes remain preserved as encoded
+state for later interpretation. Under the current policy, installation
+already enforces a first non-escalation rule: a Security Domain instance
+cannot grant privilege bits it does not itself hold. This first
+non-escalation check is enforced by the kernel proxy before the Rustlet
+Security Domain hook is called. The Rustlet may therefore refine a
+management decision by rejecting it, but it cannot extend base
+privileges that the kernel proxy has already refused. During bootstrap,
+the kernel creates one implicit root Security Domain instance and grants
+that bootstrap instance the complete administrative privilege set currently
+modeled by the platform.
+
+The same rule also structures delegation. A Security Domain instance may only
+create descendant objects under its own authority, and a child Security Domain
+instance may not receive more privileges than its parent instance already
+holds. In this model, the delegation path is expressed through
+\texttt{parent\_sd\_aid} in the registry rather than through ad hoc side
+tables. For already existing objects, the same hierarchy constrains later
+management: selection, deletion, and authority checks only succeed when the
+target object belongs to the active Security Domain instance sub-tree.
+Operationally, the registry itself is treated as the visibility boundary for
+that administrative context: ordinary lookups are resolved from the point of
+view of the Security Domain instance currently selected for the active secure
+channel, so that objects outside the visible sub-tree are treated as absent.
+
+Default implementations are conservative: unsupported operations reject
+the request and no secure channel is considered open. This lets simple
+bring-up Security Domains implement only the methods that are currently
+needed while keeping the authority boundary explicit.
+
+Identity and deployment role are not decided by the Rustlet itself.
+In particular, the AID under which a Security Domain instance is known,
+its \texttt{parent\_sd\_aid}, and whether that instance is the bootstrap root
+Security Domain are kernel-side deployment properties rather than Rustlet
+callbacks.
+
+The binary relay used by the kernel is the generated
+\texttt{sddispatch} entry in the Security Domain vtable. It is not a
+second APDU transport. It is a privileged framework call from the kernel
+to the selected Security Domain instance. The ABI carried through
+\texttt{sddispatch} is intentionally separate from ordinary APDU
+dispatch so that management decisions, secure-channel state, secure
+messaging transforms, and
+application APDU processing remain distinct.
+
+The present implementation already validates that a Rustlet Security
+Domain can be installed, selected, and reached through the generated
+Security Domain vtable. The current \texttt{sddispatch} framework call
+already routes the three main families of dedicated Security Domain
+operations:
+\begin{itemize}
+\item \textbf{management}: load and installation authorization; deletion and
+  data access; applet management; selectable-state decisions;
+\item \textbf{secure channel}: profile support, session initialization and
+  authentication, security-level inspection, open-state and MAC-length
+  queries, and session reset;
+\item \textbf{secure messaging}: \texttt{unwrap\_command()} and
+  \texttt{wrap\_response()}.
+\end{itemize}
+
+The present reference Rustlet Security Domain already demonstrates this
+model with a user-land SCP03 authority supporting \texttt{S8} and
+\texttt{S16}, as well as protected exchanges using
+\texttt{C-MAC/R-MAC} and \texttt{C-ENC/R-ENC}. The architectural point
+is therefore the following: application behavior, management authority,
+secure-channel establishment, secure messaging, and key-related policy
+belong to distinct functional blocks, but they are exposed to the
+developer through one coherent Rustlet-side Security Domain framework.
+
+\section{Security Model and Isolation Principle}
+
+\subsection{Isolation Principle}
+
+Abstractly, a Rustlet is machine code executed inside the secure element
+under operating-system control. It is not trusted as kernel code and it
+does not execute with unrestricted access to secure-element memory.
+
+The current isolation principle is based on four distinct memory areas:
+\begin{itemize}
+\item the Gate Region;
+\item the execution stack;
+\item the data and heap area;
+\item the executable code area.
+\end{itemize}
+
+The gate region contains the shared APDU exchange buffer only; it is
+read/write and execute-never. Exception entry and resume code remains in
+kernel flash.
+The execution stack is the stack used while the Rustlet runs. The data
+and heap area contains writable Rustlet-owned memory. The executable
+code area contains the Rustlet machine code mapped from flash.
+
+Physically, the execution stack and writable data belong to one
+power-of-two RAM block allocated and aligned by the kernel allocator.
+The stack occupies the lowest addresses and grows downward; relocated
+data and the Rustlet heap immediately follow it at higher addresses.
+On MPU-equipped targets, the MPU exposes this complete block through one
+RW/XN region. A downward stack overflow therefore leaves the permitted RAM
+region directly, without requiring an internal guard gap or a second MPU
+region.
+
+On a target with the requisite MPU, unprivileged access outside the assigned
+regions is denied and results in a fault. This is the essential isolation
+rule of that hardware-backed model. Pico~1 has no MPU: its Rustlet execution
+is useful for functional development but does not establish hardware memory
+isolation. The target-specific qualification in
+Section~\ref{sec:system-current-isolation} applies to every security claim
+in this chapter.
+
+This isolation principle should be read together with the functional
+model from Section~\ref{sec:rustlet-state-lifetimes}. Because a Rustlet instance has a resident state,
+and because installation and selection establish which instance is
+executed, isolation is not only about code execution. It is also about
+ensuring that one Rustlet instance cannot read or overwrite the state of
+another instance, and cannot escape into kernel-owned memory.
+
+Kernel services are reached through syscalls rather than through direct
+calls into privileged kernel internals. In other words, a Rustlet does
+not manipulate the operating system by linking against hidden kernel
+functions. It requests services through explicit mediated entry points.
+
+The effective realization of the MPU plan, the gate region, the return
+path and the syscall trap handling is described in Chapter~8 (Reference
+Implementation), in Section~\ref{sec:impl-rustlet-runtime}.
+
+\subsection{Security Model}
+
+The Rustlet security model should therefore be read at two levels. This
+chapter defines the developer-facing contract: a Rustlet is unprivileged
+application code, hardware-isolated only on targets with an appropriate MPU;
+it owns only its assigned memory, it communicates with
+the host through APDUs, and it reaches kernel services only through
+mediated syscalls. The implementation details that make this contract
+concrete are intentionally kept in Chapter~8, especially
+Section~\ref{sec:impl-rustlet-runtime}: shared \texttt{RustletCtx} ABI,
+selected-application descriptor, gate region, MPU programming,
+syscall-return path, panic handling, recoverable faults, and serialized
+state handoff.
+
+This separation avoids mixing the application programming model with the
+board- and kernel-specific mechanics. A Rustlet author should be able to
+reason from the present chapter; a kernel or porting developer should use
+Section~\ref{sec:impl-rustlet-runtime} to understand how the guarantee is
+realized on a concrete target.
+
+%--------------------------------------------------
