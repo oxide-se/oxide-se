@@ -1,0 +1,58 @@
+name: Rustlet API reference
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the repository toolchain
+        run: rustup show
+      - name: Check and build the reference
+        run: sh scripts/check_rustlet_docs.sh
+      - name: Package the versioned reference
+        id: package
+        shell: sh
+        env:
+          REFERENCE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+        run: |
+          set -eu
+          case "$REFERENCE_VERSION" in
+            ''|.|..|*[!A-Za-z0-9._-]*)
+              printf '%s\n' 'Version must contain only letters, digits, dot, underscore or hyphen.' >&2
+              exit 2
+              ;;
+          esac
+
+          reference_dir=target/rustlet-reference
+          staging=$(mktemp -d "$reference_dir/site.XXXXXX")
+          version_dir="$staging/api/$REFERENCE_VERSION"
+          mkdir -p "$version_dir"
+          cp -R "$reference_dir/doc/." "$version_dir/"
+          touch "$staging/.nojekyll"
+          printf '<!doctype html><html lang="en"><meta charset="utf-8"><title>oXiDe SE Rustlet API</title><h1>oXiDe SE Rustlet API</h1><p><a href="api/%s/rustlet_runtime/index.html">Reference: %s</a></p></html>\n' \
+            "$REFERENCE_VERSION" "$REFERENCE_VERSION" > "$staging/index.html"
+          git rev-parse HEAD > "$version_dir/source-commit.txt"
+          if git diff --quiet && git diff --cached --quiet; then
+            snapshot_state=clean
+          else
+            snapshot_state=modified
+          fi
+          printf '%s\n' "$snapshot_state" > "$version_dir/source-state.txt"
+          printf 'path=%s\n' "$staging" >> "$GITHUB_OUTPUT"
+      - name: Save the versioned static site
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustlet-reference-${{ github.sha }}
+          path: ${{ steps.package.outputs.path }}
+          include-hidden-files: true
+          if-no-files-found: error

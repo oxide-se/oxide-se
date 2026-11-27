@@ -1,0 +1,28 @@
+[secure_channel]
+protocols = []
+
+# This is the editable root used by rustlet.security.domain.getting.started.md.
+# Its checked-in form is intentionally neutral; SCP03 appears only after the
+# reader implements the tutorial checkpoints.
+[root.package]
+path = "./rustlets/simple_security_domain"
+aid = "A0:00:00:47:50:4F:53:30"
+
+[root.instance]
+aid = "A0:00:00:47:50:4F:53:31"
+install_bytes = "FF:FF:FF"
+
+# Public tutorial keys. Never use them outside a disposable development card.
+[[root.keys]]
+type = "Scp03Static"
+version = 1
+id = 3
+usage = "Enc"
+material = "40:41:42:43:44:45:46:47:48:49:4A:4B:4C:4D:4E:4F"
+
+[[root.keys]]
+type = "Scp03Static"
+version = 1
+id = 3
+usage = "Mac"
+material = "50:51:52:53:54:55:56:57:58:59:5A:5B:5C:5D:5E:5F"

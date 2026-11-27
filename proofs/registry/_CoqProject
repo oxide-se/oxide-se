@@ -1,0 +1,110 @@
+-Q ../../.local/registry-proof-deps/FreerDPS/theories FreerDPS
+-Q theories/common OxideSE.Registry
+-Q theories/composition OxideSE.Registry
+-Q theories/interface OxideSE.Registry
+-Q theories/internal/allocation OxideSE.Registry
+-Q theories/internal/journal OxideSE.Registry
+-Q theories/internal/recovery OxideSE.Registry
+-Q theories/internal/transactions OxideSE.Registry
+-Q theories/registry/semantics OxideSE.Registry
+-Q theories/suppliers OxideSE.Registry
+-Q theories/verification OxideSE.Registry
+theories/common/CompactImage.v
+theories/common/CompactProjection.v
+theories/common/CompactUpdates.v
+theories/common/DeferredSnapshots.v
+theories/common/PageOwnership.v
+theories/common/Slots.v
+theories/common/Types.v
+theories/composition/OwnedDataBinding.v
+theories/composition/OwnedDataComponent.v
+theories/interface/OwnedDataContract.v
+theories/internal/allocation/AllocationAdmission.v
+theories/internal/allocation/CollectionRoots.v
+theories/internal/allocation/DeferredRootMachine.v
+theories/internal/allocation/FreerAllocationAdmission.v
+theories/internal/allocation/FreerNeutralization.v
+theories/internal/allocation/FreerReachableNeutralization.v
+theories/internal/allocation/FreerRecyclingErase.v
+theories/internal/allocation/FreerRecyclingSearch.v
+theories/internal/allocation/FreerRetention.v
+theories/internal/allocation/FreerScopeRetention.v
+theories/internal/allocation/Neutralization.v
+theories/internal/allocation/NeutralizationBoundary.v
+theories/internal/allocation/PageSummaries.v
+theories/internal/allocation/RawNeutralizationBoundary.v
+theories/internal/allocation/RecycledWriter.v
+theories/internal/allocation/RecyclingErase.v
+theories/internal/allocation/RecyclingEraseBoundary.v
+theories/internal/allocation/RecyclingSearch.v
+theories/internal/allocation/RecyclingSearchBoundary.v
+theories/internal/allocation/RetentionCoverage.v
+theories/internal/allocation/ScopeOwnership.v
+theories/internal/journal/FreerJournalAppend.v
+theories/internal/journal/FreerJournalGate.v
+theories/internal/journal/JournalAppendAuthority.v
+theories/internal/journal/JournalAppendFreezeBridge.v
+theories/internal/journal/JournalAppendSelection.v
+theories/internal/journal/JournalComplement.v
+theories/internal/journal/JournalFlashBridge.v
+theories/internal/journal/JournalFreeze.v
+theories/internal/journal/JournalFreezeRecovery.v
+theories/internal/journal/JournalHistory.v
+theories/internal/journal/JournalIndex.v
+theories/internal/journal/JournalPhaseShape.v
+theories/internal/journal/JournalProtocolAuthority.v
+theories/internal/journal/JournalRawOrder.v
+theories/internal/journal/JournalReachableShape.v
+theories/internal/journal/JournalRecoveryTrace.v
+theories/internal/journal/JournalRequests.v
+theories/internal/journal/JournalRotationOnePass.v
+theories/internal/journal/JournalScan.v
+theories/internal/journal/JournalStaleBackup.v
+theories/internal/journal/JournalTraceScan.v
+theories/internal/journal/JournalValidator.v
+theories/internal/journal/JournalWriteEntry.v
+theories/internal/recovery/BootReconstruction.v
+theories/internal/recovery/BootTransaction.v
+theories/internal/recovery/FreerBoot.v
+theories/internal/transactions/CrashProperties.v
+theories/internal/transactions/DataEpisode.v
+theories/internal/transactions/FreerAdmittedTrace.v
+theories/internal/transactions/FreerDataEpisode.v
+theories/internal/transactions/FreerGlobalDataTrace.v
+theories/internal/transactions/FreerPersistentBoundary.v
+theories/internal/transactions/FreerPreAppend.v
+theories/internal/transactions/FreerPreparationOutcomes.v
+theories/internal/transactions/FreerPrepared.v
+theories/internal/transactions/FreerPublicationReturn.v
+theories/internal/transactions/FreerRawBoundary.v
+theories/internal/transactions/FreerRecycledWriter.v
+theories/internal/transactions/FreerTransactionBoundary.v
+theories/internal/transactions/IncarnationBoundary.v
+theories/internal/transactions/PersistentBoundary.v
+theories/internal/transactions/PreAppendValidation.v
+theories/internal/transactions/PreparationOutcomes.v
+theories/internal/transactions/PreparedAuthority.v
+theories/internal/transactions/PublicationPreparation.v
+theories/internal/transactions/TransactionBoundary.v
+theories/registry/semantics/OwnedDataInvariant.v
+theories/registry/semantics/OwnedDataOffered.v
+theories/registry/semantics/OwnedDataRequirements.v
+theories/registry/semantics/OwnedDataResponses.v
+theories/registry/semantics/OwnedDataServices.v
+theories/registry/semantics/OwnedDataTypes.v
+theories/suppliers/BossDecodingContract.v
+theories/suppliers/BossEncodingContract.v
+theories/suppliers/BossValidationContract.v
+theories/suppliers/DecodedGeometryContract.v
+theories/suppliers/FlashSpec.v
+theories/suppliers/FreerFlash.v
+theories/suppliers/IncarnationReaderContract.v
+theories/verification/Audit.v
+theories/verification/FlashCounterexample.v
+theories/verification/FreerAudit.v
+theories/verification/FreerFlashClient.v
+theories/verification/JournalAvailabilityCounterexample.v
+theories/verification/JournalCRCExample.v
+theories/verification/LoadCRCExample.v
+theories/verification/PublicationResetWitness.v
+theories/verification/OwnedDataWitnesses.v

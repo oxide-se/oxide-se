@@ -1,0 +1,196 @@
+\chapter{Examples of the Three Information Lifetimes}
+\label{app:state-examples}
+
+These examples use the same typed state interface for ordinary Rustlets and
+Rustlet Security Domains. Persistent and Session are independent Serde/Postcard
+objects. Working data is local to processing and has no inter-APDU retention
+contract. None of these categories alone specifies secure memory erasure;
+Section~\ref{subsec:rustlet-state-erasure} defines that distinction.
+
+\section{An Ordinary Rustlet with Two Counters}
+
+The following source defines a complete minimal handler. INS~\texttt{10}
+increments a durable counter and a session counter; INS~\texttt{20} returns
+both as little-endian words. A SELECT does not increment either counter.
+
+\begin{verbatim}
+#![no_std]
+#![no_main]
+
+use rustlet_runtime::{
+    declare_rustlet, Apdu, ApduStatus, Rustlet, RustletCtx, State,
+};
+use rustlet_runtime::serde::{Deserialize, Serialize};
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(crate = "rustlet_runtime::serde")]
+struct Persistent {
+    accepted_commands: u32,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(crate = "rustlet_runtime::serde")]
+struct Session {
+    commands_this_activation: u32,
+}
+
+struct Counter;
+declare_rustlet!(Counter, 2048usize);
+
+impl Rustlet for Counter {
+    type Persistent = Persistent;
+    type Session = Session;
+
+    fn process_apdu(
+        state: &mut State<Persistent, Session>,
+        ctx: &mut RustletCtx,
+    ) -> ApduStatus {
+        let apdu = Apdu::new(ctx);
+        if apdu.is_select() {
+            return apdu.accept();
+        }
+        match apdu.ins() {
+            0x10 => {
+                state.persistent.accepted_commands = state
+                    .persistent.accepted_commands.wrapping_add(1);
+                state.session.commands_this_activation = state
+                    .session.commands_this_activation.wrapping_add(1);
+                apdu.accept()
+            }
+            0x20 => {
+                // Working data: no reference escapes this invocation.
+                let mut reply = [0u8; 8];
+                reply[..4].copy_from_slice(
+                    &state.persistent.accepted_commands.to_le_bytes());
+                reply[4..].copy_from_slice(
+                    &state.session.commands_this_activation.to_le_bytes());
+                apdu.as_sending().send(&reply)
+            }
+            _ => apdu.reject(ApduStatus::instruction_not_supported()),
+        }
+    }
+}
+\end{verbatim}
+
+Only \texttt{accepted\_commands} is encoded in the registry. Successful APDU
+publication makes its update durable. The session counter survives later
+APDUs and repeated selection of this instance. Selecting another ordinary
+instance and returning starts a fresh session counter while preserving the
+committed durable counter. Reset has the same separation once Persistent is
+recovered from storage. The response array is working data: the transport
+owns any staged response bytes after the handler returns, not this local
+array or a borrow into it.
+
+The handler type \texttt{Counter} has no instance fields and does not derive
+Serde or Default. The runtime owns the two data objects. An application with
+no durable state may use \texttt{type Persistent = ();}; one with no session
+uses \texttt{type Session = ();}. The typed interface remains the same.
+
+\section{A Security Domain Using the Same State Interface}
+
+This independent source is a minimal administrative skeleton, not an SCP
+implementation. It has a durable diagnostic counter and an activation-local
+counter. Default secure-channel hooks do not establish a channel. The reset
+hook illustrates logical session reset using non-secret diagnostic values;
+a real channel also needs deliberate cleanup of its secret storage.
+
+\begin{verbatim}
+#![no_std]
+#![no_main]
+
+use rustlet_runtime::{
+    declare_security_domain, Apdu, ApduStatus, Rustlet,
+    RustletCtx, RustletSecurityDomain, State,
+};
+use rustlet_runtime::serde::{Deserialize, Serialize};
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(crate = "rustlet_runtime::serde")]
+struct Persistent {
+    accepted_commands: u32,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(crate = "rustlet_runtime::serde")]
+struct Session {
+    commands_since_reset: u32,
+}
+
+struct DiagnosticSd;
+declare_security_domain!(DiagnosticSd, 2048usize);
+
+impl Rustlet for DiagnosticSd {
+    type Persistent = Persistent;
+    type Session = Session;
+
+    fn process_apdu(
+        state: &mut State<Persistent, Session>,
+        ctx: &mut RustletCtx,
+    ) -> ApduStatus {
+        let apdu = Apdu::new(ctx);
+        if apdu.is_select() {
+            return apdu.accept();
+        }
+        if apdu.ins() != 0x10 {
+            return apdu.reject(ApduStatus::instruction_not_supported());
+        }
+        state.persistent.accepted_commands = state
+            .persistent.accepted_commands.wrapping_add(1);
+        state.session.commands_since_reset = state
+            .session.commands_since_reset.wrapping_add(1);
+        apdu.accept()
+    }
+}
+
+impl RustletSecurityDomain for DiagnosticSd {
+    fn reset_secure_channel(state: &mut State<Persistent, Session>) {
+        state.session = Session::default();
+    }
+}
+\end{verbatim}
+
+A complete SCP implementation puts derived keys, authentication flags,
+handshake progress, MAC chains and encryption counters in Session. Durable
+policy stays in Persistent; runtime-owned privileges and lifecycle remain
+in the administrative header. Cryptographic scratch values and decoded APDU
+borrows remain working data. Protocol handlers must not store APDU borrows
+or crypto-provider references in either retained object.
+
+The default Session must represent an inactive channel. A protocol reset
+must invalidate channel state immediately even when the SD remains resident.
+The assignment shown above resets logical diagnostic values; it is not an
+example of guaranteed secret zeroization.
+
+\section{Reading a Rollback Trace}
+
+This is the Persistent-rollback/Session-conserved cell of
+Section~\ref{subsec:registry-state-transitions}. A channel reset without a
+persistent mutation selects the opposite cell; a terminal SD fault selects
+both rollback and session retirement; normal successful processing selects
+neither. Session retirement never restores an old authenticated state.
+
+
+Suppose committed Persistent contains a policy value $P_0$, while the live
+Session contains a valid MAC chain $S_0$:
+\begin{enumerate}
+\item A valid protected command advances the channel to $S_1$.
+\item Management tentatively changes the policy to $P_1$, then rejects the
+  operation and rolls back its savepoint.
+\item The next SD call must observe $P_0$ and the legitimate current Session,
+  including $S_1$ and any subsequent valid response-protection progress.
+\item The runtime preserves that current Session in a temporary RAM encoding,
+  cleans the heap and reconstructs the two typed objects before the call.
+  It does not put $S_1$ in flash and does not restore $S_0$.
+\end{enumerate}
+
+An unrelated scratch value has no reconstruction guarantee. It may be
+removed by heap cleaning or may leave bytes elsewhere in RAM; neither
+possibility is application state. A snapshot/restore failure, an SD terminal
+fault or final publication failure instead retires the channel. Recovery
+requires a fresh activation or establishment as appropriate.
+
+The same distinction applies to a multi-command candidate value. Put it in
+Session if losing preparation when the activation ends is acceptable. Put it
+in Persistent together with its phase and recovery information if preparation
+must survive reset. A local variable or an excluded serialized field cannot
+substitute for either contract.

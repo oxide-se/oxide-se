@@ -1,0 +1,4 @@
+[submodule "tooling/build-fae"]
+	path = tooling/build-fae
+	url = https://github.com/2xs/build-fae.git
+	branch = main

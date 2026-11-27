@@ -1,0 +1,856 @@
+From OxideSE.Registry Require Import Types FlashSpec Slots CompactImage CompactProjection DeferredSnapshots PageOwnership CrashProperties
+  FlashCounterexample JournalComplement JournalFlashBridge JournalWriteEntry
+  JournalRotationOnePass JournalRecoveryTrace JournalScan JournalIndex JournalAppendSelection JournalTraceScan
+  JournalStaleBackup JournalFreeze JournalFreezeRecovery JournalAppendFreezeBridge
+  JournalRequests JournalPhaseShape JournalReachableShape JournalAppendAuthority JournalProtocolAuthority JournalHistory
+  JournalAvailabilityCounterexample JournalCRCExample LoadCRCExample.
+
+(* Generic foundations only; no transaction or recovery theorem yet. *)
+Print Assumptions put_same.
+Print Assumptions put_other.
+Print Assumptions program_success_contents.
+Print Assumptions erase_success_contents.
+Print Assumptions rejected_request_has_no_program_step.
+Print Assumptions program_completed_before_reset.
+Print Assumptions program_completed_can_return_verify_failed.
+Print Assumptions erase_completed_before_reset.
+Print Assumptions failed_program_image_can_be_reset.
+Print Assumptions failed_erase_image_can_be_reset.
+Print Assumptions program_locality.
+Print Assumptions erase_locality.
+Print Assumptions program_step_preserves_valid_flash.
+Print Assumptions erase_step_preserves_valid_flash.
+Print Assumptions interrupted_program_requested_only.
+Print Assumptions failed_program_requested_only.
+Print Assumptions identical_page_rewrite_unchanged.
+Print Assumptions identical_byte_preserved.
+Print Assumptions erase_no_effect_error_allowed.
+Print Assumptions replace_length.
+Print Assumptions replace_shadow.
+Print Assumptions replace_original.
+Print Assumptions replace_commute.
+Print Assumptions at_replaced.
+Print Assumptions writable_bound.
+Print Assumptions project_replace.
+Print Assumptions replace_preserves_unique.
+Print Assumptions live_count_bounded.
+Print Assumptions deletion_preserves_absence.
+Print Assumptions deletion_preserves_unique.
+Print Assumptions slot_at_other.
+Print Assumptions compact_image_length.
+Print Assumptions empty_slot_retains_its_index.
+Print Assumptions full_image_fits_ten_256_byte_pages.
+Print Assumptions trailing_holes_preserve_projection.
+Print Assumptions unresolved_entry_fails.
+Print Assumptions resolved_hole_stays_hole.
+Print Assumptions begin_scope_length.
+Print Assumptions seventh_scope_rejected.
+Print Assumptions before_change_resolves.
+Print Assumptions before_change_keeps_materialized.
+Print Assumptions resolved_owner_is_depth.
+Print Assumptions six_scopes_share_first_prestate.
+Print Assumptions accepted_child_still_has_parent_prestate.
+Print Assumptions reserve_rejects_occupied.
+Print Assumptions reserve_result_well_formed.
+Print Assumptions reserve_clears_validation.
+Print Assumptions reserve_preserves_protection.
+Print Assumptions rehome_keeps_validation.
+Print Assumptions rehome_result_well_formed.
+Print Assumptions rehome_preserves_protection.
+Print Assumptions release_preserves_protection_if_unneeded.
+Print Assumptions release_clears_validation.
+Print Assumptions verify_failed_can_corrupt_previous_page_contents.
+Print Assumptions returned_program_error_exceeds_requested_bits.
+Print Assumptions active_contract_excludes_counterexample.
+Print Assumptions distinct_codes_incomparable.
+Print Assumptions distinct_codes_neither_direction.
+Print Assumptions program_cannot_retarget.
+Print Assumptions erase_cannot_retarget.
+Print Assumptions torn_program_then_erase_cannot_retarget.
+Print Assumptions le32_roundtrip.
+Print Assumptions from_le32_sound.
+Print Assumptions decode_code_bytes.
+Print Assumptions decode_slot_sound.
+Print Assumptions decode_journal_entry_sound.
+Print Assumptions decode_journal_entry_code.
+Print Assumptions erased_slot_invalid.
+Print Assumptions distinct_byte_codes_incomparable.
+Print Assumptions code_bytes_valid.
+Print Assumptions erased_slot_above_code.
+Print Assumptions complete_byte_program_cannot_retarget.
+Print Assumptions complete_byte_erase_cannot_retarget.
+Print Assumptions torn_byte_program_then_erase_cannot_retarget.
+Print Assumptions secondary_erase_cannot_redirect.
+Print Assumptions restored_primary_survives_secondary_erase.
+Print Assumptions restored_primary_survives_secondary_byte_erase.
+Print Assumptions validated_backup_only_requested_address.
+Print Assumptions rejected_backup_requires_primary_authority.
+Print Assumptions extra_zero_can_invalidate_complete_code.
+Print Assumptions interrupted_program_slot_requested_only.
+Print Assumptions failed_program_slot_requested_only.
+Print Assumptions failed_page_copy_cannot_retarget.
+Print Assumptions success_program_slot_exact.
+Print Assumptions page_copy_cannot_retarget_any_outcome.
+Print Assumptions interrupted_erase_slot_monotone.
+Print Assumptions erase_preserves_outside_slot.
+Print Assumptions erase_slot_monotone_any_outcome.
+Print Assumptions erase_cannot_retarget_any_outcome.
+Print Assumptions interrupted_page_copy_cannot_retarget.
+Print Assumptions interrupted_sector_erase_cannot_retarget.
+Print Assumptions interrupted_program_then_erase_cannot_retarget.
+Print Assumptions page_rewrite_preserves_copied_slot.
+Print Assumptions write_entry_page_old_byte.
+Print Assumptions write_entry_page_request.
+Print Assumptions write_entry_code_request.
+Print Assumptions write_entry_page_target_slot.
+Print Assumptions write_entry_preserves_disjoint_slot.
+Print Assumptions write_entry_preserves_other_page.
+Print Assumptions write_entry_cannot_publish_other_address.
+Print Assumptions copy_cut_preserves_old.
+Print Assumptions completed_copy_establishes_backup.
+Print Assumptions primary_erase_preserves_backup.
+Print Assumptions completed_restore_establishes_primary.
+Print Assumptions restore_cut_preserves_backup.
+Print Assumptions secondary_erase_preserves_primary.
+Print Assumptions append_cut_preserves_primary_A.
+Print Assumptions successful_rotation_prefix_and_any_final_append.
+Print Assumptions completed_recovery_from_valid_backup.
+Print Assumptions recovery_secondary_erase_when_backup_rejected.
+Print Assumptions recovery_step_preserves_invariant.
+Print Assumptions repeated_recovery_preserves_authority.
+Print Assumptions uninterrupted_valid_backup_recovery_reaches_done.
+Print Assumptions uninterrupted_invalid_backup_recovery_reaches_done.
+Print Assumptions rotation_step_preserves_invariant.
+Print Assumptions protocol_step_preserves_invariant.
+Print Assumptions initial_rotation_invariant.
+Print Assumptions arbitrary_rotation_and_recovery_preserve_A.
+Print Assumptions arbitrary_trace_backup_cannot_retarget.
+Print Assumptions failed_page_rewrite_cannot_retarget.
+Print Assumptions latest_scan_sound.
+Print Assumptions latest_scan_none.
+Print Assumptions latest_scan_some_if_checked.
+Print Assumptions latest_scan_selects_given.
+Print Assumptions latest_in_has_validated_slot.
+Print Assumptions latest_in_selects_highest.
+Print Assumptions authentic_but_unpublished_boss_not_selected.
+Print Assumptions complete_slot_physically_published.
+Print Assumptions first_empty_slot_sound.
+Print Assumptions first_empty_slot_none.
+Print Assumptions all_erased_has_erased_suffix.
+Print Assumptions aligned_page_stays_in_primary.
+Print Assumptions primary_page_write_preserves_clean_secondary.
+Print Assumptions successful_nonrotation_append_selects.
+Print Assumptions any_outcome_nonrotation_preserves_erased_suffix.
+Print Assumptions successful_rotation_suffix_selects_D.
+Print Assumptions successful_rotation_suffix_cleans_secondary.
+Print Assumptions finite_successful_appends_select_newest.
+Print Assumptions finite_successful_appends_from_erased_select_newest.
+Print Assumptions physical_completion_selects_D.
+Print Assumptions normal_append_return_can_ack_D.
+Print Assumptions completed_program_error_can_publish_without_ack.
+Print Assumptions completed_readback_error_can_publish_without_ack.
+Print Assumptions completed_unacknowledged_D_survives_reset_if_backup_clean.
+Print Assumptions slot_fits_sector.
+Print Assumptions done_trace_yields_some_validated_primary.
+Print Assumptions stale_first_append_rotates.
+Print Assumptions stale_initial_latest_is_A.
+Print Assumptions stale_second_append_skips_rotation.
+Print Assumptions stale_secondary_erase_request.
+Print Assumptions stale_secondary_erase_may_fail_without_effect.
+Print Assumptions stale_second_append_program_request.
+Print Assumptions stale_D_program_success_is_permitted.
+Print Assumptions stale_success_image_is_new_primary.
+Print Assumptions stale_acknowledged_D_selected_before_reset.
+Print Assumptions stale_physical_success_selects_D.
+Print Assumptions stale_backup_validates_A.
+Print Assumptions stale_recovery_selects_A.
+Print Assumptions stale_authority_regression.
+Print Assumptions returned_program_error_freezes.
+Print Assumptions physically_complete_program_error_still_freezes.
+Print Assumptions completed_program_readback_error_freezes.
+Print Assumptions returned_erase_error_freezes.
+Print Assumptions frozen_step_has_no_flash_or_allocation_effect.
+Print Assumptions frozen_scope_close_keeps_reservations.
+Print Assumptions frozen_finite_trace_cannot_ack.
+Print Assumptions reset_requires_recovery_before_ack.
+Print Assumptions only_recovery_sets_boot_ready.
+Print Assumptions boot_pending_step_cannot_ack.
+Print Assumptions repeated_boot_interruptions_cannot_ack.
+Print Assumptions stale_secondary_failure_freezes.
+Print Assumptions old_D_after_error_is_excluded.
+Print Assumptions successful_secondary_erase_cleans.
+Print Assumptions successful_final_append_slot_complete.
+Print Assumptions protocol_step_preserves_clean_phase.
+Print Assumptions arbitrary_trace_done_has_clean_secondary.
+Print Assumptions done_trace_yields_validated_primary_and_clean_secondary.
+Print Assumptions completed_latest_opens_boot_gate.
+Print Assumptions clean_selected_reset_keeps_address.
+Print Assumptions acknowledged_D_does_not_recover_A_when_selected.
+Print Assumptions returned_error_can_destroy_recoverable_A.
+Print Assumptions availability_append_request.
+Print Assumptions failed_append_can_lose_A_without_writing_C.
+Print Assumptions active_contract_excludes_failed_append.
+Print Assumptions previous_crc_valid.
+Print Assumptions changed_crc_valid.
+Print Assumptions both_slots_decode_in_pico_data_area.
+Print Assumptions previous_slot_can_be_programmed_to_another_valid_slot.
+Print Assumptions secondary_erase_can_redirect_old_crc_slot.
+Print Assumptions distinct_load_bodies_have_equal_crc.
+
+(* Common phase, request and offset-history invariant, after 12a9b3a. *)
+Print Assumptions first_ff_write_request.
+Print Assumptions primary_erase_request.
+Print Assumptions secondary_erase_request.
+Print Assumptions backup_copy_request.
+Print Assumptions primary_restore_request.
+Print Assumptions second_slot_write_request.
+Print Assumptions JournalPhaseShape.protocol_step_preserves_phase_shape.
+Print Assumptions completed_rotation_recovery_establishes_shape.
+Print Assumptions phase_invariant_establishes_requests.
+Print Assumptions reset_between_commands_preserves_phase_shape.
+Print Assumptions JournalReachableShape.step_preserves_invariant.
+Print Assumptions successful_initialize_establishes_bootstrap.
+Print Assumptions reachable_invariant.
+Print Assumptions reachable_ready_has_shape_and_clean_secondary.
+Print Assumptions reachable_candidate_request.
+Print Assumptions reachable_protocol_request.
+Print Assumptions reachable_acknowledgement_selects.
+Print Assumptions reachable_holey_inspect_has_valid_backup.
+Print Assumptions frozen_idle_only_stutters_or_resets.
+Print Assumptions frozen_protocol_only_stutters_or_resets.
+Print Assumptions any_candidate_outcome_updates_authority.
+Print Assumptions protocol_step_preserves_authority.
+Print Assumptions reset_preserves_authority.
+Print Assumptions step_preserves_history.
+Print Assumptions logged_step_preserves_invariant.
+Print Assumptions arbitrary_finite_history_preserves_invariant.
+Print Assumptions logged_reachable_invariant.
+Print Assumptions ready_selection_is_latest_physical_publication.
+Print Assumptions acknowledged_no_later_publication_cannot_roll_back.
+
+From OxideSE.Registry Require Import RetentionCoverage.
+Print Assumptions byte_page_touched.
+Print Assumptions collection_establishes_coverage.
+Print Assumptions collection_free_implies_no_listed_reference.
+Print Assumptions erase_preserves_covered_ranges.
+Print Assumptions program_preserves_covered_ranges.
+Print Assumptions finite_guarded_trace_preserves_ranges.
+Print Assumptions enumerated_root_covered.
+Print Assumptions enumerated_reservation_covered.
+Print Assumptions live_incarnation_cannot_be_recycled.
+
+From OxideSE.Registry Require Import ScopeOwnership.
+Print Assumptions rollback_restores_prestate.
+Print Assumptions close_preserves_remaining_boundaries.
+Print Assumptions accept_child_preserves_parent_rollback.
+Print Assumptions materialized_shared_boss_survives_each_rollback.
+Print Assumptions absent_summary_scan_is_identity.
+Print Assumptions fresh_reservation_apart.
+Print Assumptions release_unattached_preserves_bounds.
+Print Assumptions finite_scope_trace_inductive.
+Print Assumptions shared_snapshot_inductive.
+Print Assumptions reserve_then_rehome_is_direct.
+Print Assumptions external_collect_inductive.
+Print Assumptions error_freeze_protects_possible_current_authority.
+Print Assumptions failed_preparation_freeze_covers_reservation.
+Print Assumptions finite_retention_trace_inductive.
+Print Assumptions reachable_retention_erase_preserves.
+
+Print Assumptions finite_frozen_cleanup_keeps_possible_authority.
+From OxideSE.Registry Require Import CollectionRoots.
+Print Assumptions final_collection_enumerates_surviving_roots.
+Print Assumptions final_collection_covers_all_survivors.
+Print Assumptions final_collection_release_is_safe.
+
+From OxideSE.Registry Require Import PageSummaries DeferredRootMachine PreparedAuthority.
+Print Assumptions reserve_summary_sound.
+Print Assumptions rehome_summary_sound.
+Print Assumptions release_summary_sound.
+Print Assumptions close_summary_sound.
+Print Assumptions collect_summary_sound.
+Print Assumptions finite_summary_trace_sound.
+Print Assumptions root_step_inductive.
+Print Assumptions deferred_suffix_derived.
+Print Assumptions finite_roots_preserve_agreement.
+Print Assumptions reachable_deferred_suffix.
+Print Assumptions enter_preparation_invariant.
+Print Assumptions preparation_step_inductive.
+Print Assumptions finite_preparation_trace_protects.
+Print Assumptions reachable_preparation_erase_preserves.
+Print Assumptions frozen_preparation_step_keeps_storage.
+Print Assumptions frozen_preparation_trace_keeps_storage.
+Print Assumptions preparation_program_preserves_roots.
+Print Assumptions accepting_table_keeps_protection.
+Print Assumptions scope_table_is_shared.
+Print Assumptions summary_table_is_shared.
+Print Assumptions finish_summary_sound.
+Print Assumptions preparation_step_summary_sound.
+Print Assumptions protection_step_inductive.
+Print Assumptions finite_protection_trace.
+Print Assumptions enter_with_summaries_invariant.
+Print Assumptions reachable_absent_summary_scan_identity.
+
+(* DataReservation cycle targeting Rust 5c75509, merged by 915a159. *)
+Print Assumptions data_scope_table_shared.
+Print Assumptions data_reserve_ownership.
+Print Assumptions data_phase_ownership.
+Print Assumptions data_attach_ownership.
+Print Assumptions data_abandon_ownership.
+Print Assumptions data_begin_ownership.
+Print Assumptions data_accept_ownership.
+Print Assumptions data_rollback_ownership.
+Print Assumptions data_rollback_caller_derived.
+Print Assumptions data_command_refines_step.
+Print Assumptions data_command_preserves.
+Print Assumptions data_token_consumed_before_close.
+Print Assumptions data_drop_does_not_release_survivor.
+Print Assumptions data_execution_preserves.
+Print Assumptions data_execution_refines.
+Print Assumptions data_execution_no_publication.
+Print Assumptions successful_data_member_consumes_token.
+Print Assumptions failed_data_member_consumes_token.
+Print Assumptions unchanged_data_preserves_dirty_and_table.
+Print Assumptions completed_token_has_scope_bound.
+Print Assumptions data_execution_erase_preserves.
+Print Assumptions data_entry_invariant.
+Print Assumptions data_A_failed_callers.
+Print Assumptions data_A_failed_preserves.
+Print Assumptions data_B_rejected_callers.
+Print Assumptions data_B_rejected_restores_pair.
+Print Assumptions data_B_failed_callers.
+Print Assumptions data_B_failed_preserves.
+Print Assumptions data_success_callers.
+Print Assumptions data_success_preserves.
+Print Assumptions data_parent_rollback_callers.
+Print Assumptions data_accepted_child_parent_rollback.
+Print Assumptions data_collection_preserves.
+
+(* Snapshot barrier integrated with the Data ownership witness, cf54682. *)
+Print Assumptions snapshot_suffix_from_correspondence.
+Print Assumptions saved_prefix_owner.
+Print Assumptions snapshot_entry_correspondence.
+Print Assumptions snapshot_begin_correspondence.
+Print Assumptions snapshot_rehome_preserves.
+Print Assumptions snapshot_install_preserves.
+Print Assumptions snapshot_install_correspondence.
+Print Assumptions snapshot_barrier_shape.
+Print Assumptions snapshot_barrier_composed.
+Print Assumptions snapshot_install_caller_derived.
+Print Assumptions snapshot_success_preserves.
+Print Assumptions snapshot_then_data_preserves.
+Print Assumptions snapshot_success_does_not_publish.
+Print Assumptions snapshot_error_preserves.
+Print Assumptions snapshot_error_frozen_keeps_pages.
+Print Assumptions snapshot_error_keeps_correspondence.
+Print Assumptions snapshot_reservation_program_locality.
+Print Assumptions snapshot_body_saved_roots_do_not_need_save.
+Print Assumptions after_barrier_B_failed_callers.
+Print Assumptions snapshot_A_attached_B_failed.
+Print Assumptions after_barrier_accept_child_rollback_parent_callers.
+Print Assumptions snapshot_shared_child_accept_parent_rollback.
+Print Assumptions snapshot_retain_error_preserves.
+Print Assumptions snapshot_retain_error_keeps_correspondence.
+Print Assumptions snapshot_retain_error_keeps_table.
+
+From OxideSE.Registry Require Import CompactUpdates.
+Print Assumptions data_slot_for_admissible.
+Print Assumptions selected_insert_exact.
+Print Assumptions selected_delete_exact.
+Print Assumptions image_replace_other.
+Print Assumptions image_replace_unique.
+Print Assumptions repeated_identity_uses_same_slot.
+Print Assumptions repeated_identity_last_wins.
+Print Assumptions two_replacements_lookup.
+Print Assumptions compact_update_resolves.
+Print Assumptions dependencies_replace_exact.
+Print Assumptions dependencies_occurrence.
+Print Assumptions shared_occurrence_survives.
+Print Assumptions removed_dependency_absent.
+Print Assumptions data_tag_aid_injective.
+Print Assumptions repeated_tag_keeps_second.
+Print Assumptions plan_pair_empty.
+Print Assumptions plan_pair_indices_original.
+Print Assumptions duplicate_does_not_compare_second.
+Print Assumptions replace_current_dependencies_preserves.
+Print Assumptions exact_attach_preserves.
+Print Assumptions exact_attach_observers.
+Print Assumptions exact_delete_preserves.
+Print Assumptions exact_rollback_correspondence.
+Print Assumptions exact_current_enumeration.
+Print Assumptions exact_member_preserves.
+Print Assumptions exact_pair_preserves.
+Print Assumptions exact_pair_rollback.
+Print Assumptions exact_A_then_B_failure.
+Print Assumptions exact_pair_accept_child_rollback_parent.
+Print Assumptions finite_exact_edits_preserve.
+Print Assumptions exact_pair_keeps_allocations.
+Print Assumptions fresh_data_entry_not_already_attached.
+Print Assumptions exact_two_callers.
+Print Assumptions exact_repeated_identity_pair.
+Print Assumptions exact_rejection_preserves_current.
+Print Assumptions exact_empty_cycle_unchanged.
+Print Assumptions snapshot_then_exact_edits.
+
+Print Assumptions collection_enabled_spec.
+Print Assumptions failed_collection_keeps_state.
+Print Assumptions skipped_collection_keeps_state.
+Print Assumptions frozen_collection_keeps_state.
+Print Assumptions boundary_ranges_enumerated.
+Print Assumptions install_collection_boundary.
+Print Assumptions collection_return_preserves.
+Print Assumptions collected_free_excludes_survivor.
+Print Assumptions collection_then_erase.
+Print Assumptions exact_attach_collection_boundary.
+Print Assumptions exact_delete_collection_boundary.
+Print Assumptions changed_image_with_durable_skips_collection.
+Print Assumptions open_scope_skips_collection.
+Print Assumptions collection_keeps_history_link.
+Print Assumptions ready_selected_dependencies_protected.
+Print Assumptions collected_ready_authority_protected.
+Print Assumptions local_data_keeps_history_link.
+Print Assumptions finite_local_data_keeps_history_link.
+Print Assumptions slot_publication_preserves.
+Print Assumptions durable_ram_update_preserves.
+Print Assumptions successful_close_boundary.
+Print Assumptions successful_close_protects.
+Print Assumptions successful_exit_collection.
+Print Assumptions successful_close_owner_transfer.
+Print Assumptions successful_close_collection_guard.
+Print Assumptions publication_exit_to_collection.
+Print Assumptions ordinary_completion_emits_candidate.
+Print Assumptions rotation_completion_emits_candidate.
+Print Assumptions append_return_preserves_logged_invariant.
+Print Assumptions successful_close_restores_data.
+Print Assumptions idle_collection_restores_data.
+Print Assumptions finish_collected_idle.
+Print Assumptions materialize_candidate_preserves.
+Print Assumptions data_transaction_idle.
+Print Assumptions two_data_transactions_idle.
+Print Assumptions completed_trace_returns_ready.
+Print Assumptions idle_root_links_ready.
+Print Assumptions two_transactions_with_journal.
+Print Assumptions data_transaction_collection_flags.
+Print Assumptions install_candidate_preserves.
+Print Assumptions uncertain_return_protects.
+Print Assumptions frozen_data_cleanup.
+Print Assumptions uncertain_error_then_rollback.
+Print Assumptions frozen_cleanup_collection_skips.
+Print Assumptions frozen_mutation_callers_rejected.
+Print Assumptions uncertain_trace_authorities.
+Print Assumptions uncertain_publication_then_cleanup.
+Print Assumptions readback_error_uncertain_edge.
+Print Assumptions rotation_error_uncertain_edge.
+Print Assumptions logged_trace_frame_after_journal.
+Print Assumptions frozen_journal_finite_continuation_stutters.
+Print Assumptions uncertain_trace_reset_boundary.
+Print Assumptions object_area_length.
+Print Assumptions object_extent_before_journal.
+Print Assumptions journal_frame_implies_object_frame.
+Print Assumptions aligned_journal_page_after_objects.
+Print Assumptions physical_journal_program_preserves_objects.
+Print Assumptions physical_journal_erase_preserves_objects.
+Print Assumptions recovery_retains_cell.
+Print Assumptions recovery_retains_summary.
+Print Assumptions reconstruction_establishes_idle.
+Print Assumptions decoded_reconstruction_opens_transaction.
+Print Assumptions remembered_recovery_can_begin.
+Print Assumptions returned_error_reset_step.
+Print Assumptions recovery_trace_history.
+Print Assumptions reset_recovery_selects_history.
+Print Assumptions reset_recovery_preserves_object_extents.
+Print Assumptions recovered_registry_can_start_transaction.
+Print Assumptions uncertain_reset_recovery_restart.
+Print Assumptions recovered_journal_remember_can_begin.
+Print Assumptions uncertain_data_transaction_safety.
+
+From OxideSE.Registry Require Import PublicationPreparation.
+Print Assumptions transaction_preparation_on_common_flash.
+Print Assumptions prepared_publication_client_or_uncertain.
+Print Assumptions client_success_recovery.
+
+From OxideSE.Registry Require Import PreparationOutcomes.
+Print Assumptions writer_execution_locality.
+Print Assumptions writer_execution_prefix.
+Print Assumptions preparation_error_rollback.
+Print Assumptions preparation_collection_preserves.
+Print Assumptions prepublication_recovery.
+Print Assumptions writer_exit_composes.
+Print Assumptions preparation_outcomes_transaction.
+
+From OxideSE.Registry Require Import BootReconstruction BootTransaction.
+Print Assumptions boot_step_preserves.
+Print Assumptions boot_finite_trace.
+Print Assumptions boot_prefix_safety.
+Print Assumptions boot_usable_opens.
+Print Assumptions reset_discards_partial.
+Print Assumptions ordinary_call_requires_completed_boot.
+Print Assumptions stopped_attempt_next.
+Print Assumptions partial_table_no_ordinary.
+Print Assumptions persistent_authority_repeated_boot.
+Print Assumptions ready_authority_boot.
+Print Assumptions prepared_failure_boot.
+Print Assumptions uncertain_authority_boot.
+Print Assumptions prepared_transaction_repeated_boot.
+
+From OxideSE.Registry Require Import TransactionBoundary.
+Print Assumptions journal_idle_common.
+Print Assumptions common_begin.
+Print Assumptions completed_boot_common.
+Print Assumptions rebuilding_common.
+Print Assumptions fatal_no_begin.
+Print Assumptions reconstruction_no_begin.
+Print Assumptions frozen_no_begin.
+Print Assumptions successful_continuation_common.
+Print Assumptions frozen_cleanup_common.
+Print Assumptions completed_slot_common.
+Print Assumptions repeated_boot_common.
+Print Assumptions rebuilding_trace_common.
+Print Assumptions boot_stopped_common.
+
+From OxideSE.Registry Require Import PersistentBoundary.
+Print Assumptions logged_history_extension.
+Print Assumptions receipts_extend.
+Print Assumptions certificate_frame.
+Print Assumptions reset_evidence.
+Print Assumptions enriched_boot_transport.
+Print Assumptions enriched_boot_usable.
+Print Assumptions enriched_boot_fatal.
+Print Assumptions enriched_reset.
+Print Assumptions receipt_extension_wellformed.
+Print Assumptions evidence_prune.
+Print Assumptions prepared_certificates.
+Print Assumptions successful_exit_evidence.
+Print Assumptions uncertain_cleanup_evidence.
+Print Assumptions client_reset_repeated_boot.
+Print Assumptions enriched_slot_completed.
+Print Assumptions enriched_append_return.
+Print Assumptions enriched_durable_sync.
+Print Assumptions enriched_client_next.
+Print Assumptions publication_success_boot.
+Print Assumptions prepared_client_repeated_boot.
+Print Assumptions uncertain_cleanup_repeated_boot.
+Print Assumptions prepared_uncertain_repeated_boot.
+Print Assumptions enriched_fatal_view.
+Print Assumptions initialized_boundary_evidence.
+Print Assumptions failed_writer_boot_evidence.
+Print Assumptions equal_offsets_different_events.
+
+From OxideSE.Registry Require Import DataEpisode.
+Print Assumptions publication_prefix_evidence.
+Print Assumptions direct_publication_reset.
+Print Assumptions append_return_before_client_reset.
+Print Assumptions failed_writer_return_boundary.
+Print Assumptions failed_writer_episode.
+Print Assumptions publication_episode_compose.
+Print Assumptions enriched_data_episode.
+Print Assumptions boot_to_next_episode.
+Print Assumptions client_to_next_episode.
+
+From OxideSE.Registry Require Import PublicationResetWitness.
+Print Assumptions completed_program_publication_cut.
+
+From OxideSE.Registry Require Import AllocationAdmission.
+Print Assumptions cursor_probe_sound.
+Print Assumptions cursor_probe_available.
+Print Assumptions cursor_reserve_preserves.
+Print Assumptions cursor_erased_witness.
+Print Assumptions cursor_occupied_witness.
+Print Assumptions cursor_address_dependent_witness.
+Print Assumptions first_erased_available.
+Print Assumptions circular_erased_sound.
+Print Assumptions circular_erased_absent.
+
+Print Assumptions post_data_occupied_probe.
+Print Assumptions post_data_nonblank_probe.
+
+From OxideSE.Registry Require Import Neutralization NeutralizationBoundary.
+Print Assumptions selection_reaches_start.
+Print Assumptions selected_clear_page_is_separated.
+Print Assumptions selected_block_commands_admissible.
+Print Assumptions neutralization_consumer.
+Print Assumptions neutralization_idle_transport.
+Print Assumptions selected_neutralization_boundary.
+Print Assumptions neutral_freeze_idle.
+Print Assumptions neutralization_frozen_cleanups.
+Print Assumptions neutralization_open_transport.
+Print Assumptions selected_neutralization_open_boundary.
+Print Assumptions selected_neutralization_events_separated.
+
+From OxideSE.Registry Require Import RecyclingSearch RecyclingSearchBoundary JournalValidator.
+Print Assumptions reusable_search_derives_guard.
+Print Assumptions search_to_neutralization.
+Print Assumptions searched_neutralization_open_boundary.
+Print Assumptions fatal_neutralization_reset_boot.
+Print Assumptions changing_validator_selection.
+Print Assumptions validator_gap_before.
+Print Assumptions validator_gap_after.
+Print Assumptions successful_append_produces_raw_winner.
+Print Assumptions successful_append_then_search_neutralization.
+Print Assumptions appended_search_neutralization_dynamic.
+
+From OxideSE.Registry Require Import JournalRawOrder RawNeutralizationBoundary.
+Print Assumptions journal_step_raw.
+Print Assumptions logged_step_preserves_raw.
+Print Assumptions logged_trace_preserves_raw.
+Print Assumptions reachable_journal_raw.
+Print Assumptions ready_raw_witness.
+Print Assumptions validator_gap_excluded.
+Print Assumptions raw_writer_prefix.
+Print Assumptions raw_ready_revalidate.
+Print Assumptions raw_searched_neutralization_dynamic.
+
+Print Assumptions neutralization_preserves_observations.
+
+From OxideSE.Registry Require Import RecyclingErase RecyclingEraseBoundary.
+Print Assumptions erase_command_admissible.
+Print Assumptions selected_sector_free.
+Print Assumptions selected_erase_preserves.
+Print Assumptions erased_late_reserve.
+Print Assumptions searched_recycling_dynamic.
+Print Assumptions recycling_late_boundary.
+Print Assumptions two_sector_reset_after_first.
+Print Assumptions neutralized_byte_can_reappear.
+Print Assumptions late_reservation_preserves_observations.
+
+From OxideSE.Registry Require Import RecycledWriter.
+Print Assumptions pending_writer_preserves_roots.
+Print Assumptions reserved_writer_dynamic.
+Print Assumptions reserved_writer_outcomes.
+Print Assumptions reused_address_not_published.
+Print Assumptions reserved_writer_returned_cleanup.
+Print Assumptions reserved_exact_attachment.
+Print Assumptions reserved_address_not_live.
+Print Assumptions writer_exit_no_publication_or_receipt.
+Print Assumptions fixed_view_forces_same_dependencies.
+Print Assumptions legacy_historical_receipt_blocks_changed_dependencies.
+Print Assumptions receipt_valid_view_independent.
+
+From OxideSE.Registry Require Import IncarnationBoundary.
+Print Assumptions evidence_reindex.
+Print Assumptions retire_unselected_certificates.
+Print Assumptions prepared_incarnation_from_reserved_writer.
+Print Assumptions boot_step_preserves_certified_read.
+Print Assumptions certified_boot_trace.
+Print Assumptions certified_boot_selected_image.
+Print Assumptions reincarnation_append_reset.
+Print Assumptions reused_offset_operational_witness.
+Print Assumptions prepared_decoding_covered.
+Print Assumptions incarnation_reset_boundary.
+Print Assumptions historical_receipts_different_dependencies.
+
+(* A12.g.4: existing reservation and physical acquisition. *)
+Print Assumptions recycling_physical_handoff.
+Print Assumptions pending_writer_consumes.
+Print Assumptions recycling_certified_acquisition.
+Print Assumptions writer_exit_phase.
+
+Print Assumptions reservation_state_open.
+
+(* A12.g.5: install and transport certificates through publication. *)
+Print Assumptions install_certified_candidate.
+Print Assumptions certified_journal_transport.
+Print Assumptions certified_uncertain_cleanup.
+Print Assumptions certified_publication_reset.
+
+(* A12.g.6: writable rollback and actual collection guard. *)
+Print Assumptions certified_normal_rollback.
+Print Assumptions certified_drop_pending.
+Print Assumptions normal_rollback_phase.
+Print Assumptions certified_prepared_rollback.
+Print Assumptions normal_rollback_callers.
+
+(* A12.g.7: checked reservation, terminal restoration and direct reset. *)
+Print Assumptions checked_reservation_error_unchanged.
+Print Assumptions free_admitted_reservation_cannot_fail.
+
+(* A12.g.8: checked cleanup and local rejections. *)
+Print Assumptions range_check_from_reservation.
+Print Assumptions checked_release_failure.
+Print Assumptions checked_rehome_failure.
+Print Assumptions checked_release_after_reservation.
+Print Assumptions checked_rehome_after_reservation.
+Print Assumptions rehome_extent_keeps_protection.
+Print Assumptions completed_writer_retain_error.
+Print Assumptions checked_release_matches_drop.
+
+(* A12.g.9: actual outer/local scopes, successful pair. *)
+Print Assumptions certified_local_begin.
+Print Assumptions certified_local_accept.
+Print Assumptions local_accept_skips_collection.
+Print Assumptions local_accept_retains_outer.
+Print Assumptions certified_written_member.
+Print Assumptions certified_outer_pair.
+Print Assumptions outer_local_materialized_roots.
+Print Assumptions pair_saved_roots_preserved.
+
+(* A12.g.10: OperationScope control and B failure after A attachment. *)
+Print Assumptions operation_phase_safe.
+Print Assumptions certified_operation_first.
+Print Assumptions certified_operation_cancel.
+Print Assumptions operation_abort_calls.
+Print Assumptions operation_abort_frozen_table.
+Print Assumptions operation_no_begin.
+
+(* A12.g.11: recycling acquisition inside OperationScope. *)
+Print Assumptions certified_operation_begin.
+Print Assumptions acquired_token_numeric.
+Print Assumptions numeric_token_phase.
+Print Assumptions numeric_token_release.
+Print Assumptions numeric_token_rehome.
+
+(* A12.g.12 partial: descriptor transport; global induction still open. *)
+Print Assumptions data_numeric_preserves.
+Print Assumptions data_numeric_execution.
+Print Assumptions numeric_exact_attach.
+Print Assumptions numeric_snapshot_error.
+Print Assumptions idle_numeric_from_ranges.
+Print Assumptions cursor_probe_numeric.
+Print Assumptions cursor_reserve_numeric.
+Print Assumptions operation_abort_numeric.
+Print Assumptions idle_numeric_begin.
+
+(* A12.g.13 partial: reconstruction obtains fresh numerical descriptors. *)
+Print Assumptions boot_numeric_from_local_decoding.
+Print Assumptions numeric_exact_member.
+
+(* A12.g.15: transport consumed by the complete numerical trace induction. *)
+Print Assumptions numeric_frozen_commands.
+Print Assumptions numeric_rollback.
+Print Assumptions numeric_failure_phase.
+Print Assumptions numeric_install.
+Print Assumptions numeric_recycled_extent.
+
+(* A12.g.19: volatile controller, separate from persistent evidence. *)
+Print Assumptions abort_then_success_selects_abort.
+Print Assumptions local_success_preserves_abort.
+Print Assumptions joined_cannot_finalize.
+Print Assumptions consumed_handle_cannot_take.
+Print Assumptions failed_finalization_drop_is_noop.
+Print Assumptions rejected_begin_clears_abort.
+Print Assumptions clean_owned_selects_retained.
+Print Assumptions changed_owned_selects_publication.
+Print Assumptions terminal_control_only_forget.
+
+Print Assumptions certified_clean_retained.
+
+Print Assumptions forget_volatile_evidence_idempotent.
+Print Assumptions phase_evidence_live.
+Print Assumptions phase_evidence_receipts.
+
+(* A12.g.26: control provenance, independent of durable storage. *)
+Print Assumptions body_error_evidence_live.
+Print Assumptions body_error_evidence_receipts.
+
+(* A12.g.29: checked Data sizing/probe and actual search call prefixes. *)
+Print Assumptions checked_cursor_rejection.
+Print Assumptions checked_cursor_found.
+Print Assumptions checked_data_total_numeric.
+Print Assumptions data_total_probe_no_numeric_error.
+Print Assumptions search_call_requires_candidate.
+Print Assumptions fatal_header_has_not_returned.
+
+(* A12.g.30: volatile page metadata is distinct from boot table coverage. *)
+Print Assumptions retaining_pages_are_partial.
+Print Assumptions recovered_metadata_matches_boot.
+Print Assumptions reset_forgets_page_metadata.
+
+(* A12.g.31: explicit, volatile scope-root presence. *)
+Print Assumptions unknown_roots_do_not_select.
+Print Assumptions snapshot_projection_loses_presence.
+Print Assumptions usable_boot_roots_reconstructed.
+
+(* A12.g.44: physical initialization marker. *)
+Print Assumptions persistence_marker_test_spec.
+Print Assumptions marker_program_success.
+Print Assumptions pending_writer_marker_frame.
+Print Assumptions recycling_marker_frame.
+Print Assumptions journal_trace_marker.
+
+(* A12.g.45: admission before reservation preserves the physical marker. *)
+Print Assumptions free_writer_marker_frame.
+
+(* A12.g.46: runtime installation has an operational boot provenance. *)
+Print Assumptions boot_step_runtime_origin.
+Print Assumptions boot_trace_runtime_origin.
+Print Assumptions usable_boot_initialized.
+Print Assumptions initialize_runtime_observed.
+Print Assumptions initialized_runtime_evidence_invariant.
+Print Assumptions reset_forgets_runtime.
+Print Assumptions recovered_runtime_observed.
+
+Print Assumptions boss_checked_generation_success.
+Print Assumptions boss_checked_generation_overflow.
+Print Assumptions boss_generation_boundary_cases.
+
+(* A12.g.48: joint decoding, runtime installation, independent of event rank. *)
+Print Assumptions decoded_counter_available.
+Print Assumptions reset_forgets_counter.
+Print Assumptions recovered_counter_decoded.
+Print Assumptions client_counter_installed.
+Print Assumptions initialized_counter_evidence_invariant.
+Print Assumptions usable_boot_counter_origin.
+Print Assumptions generation_journal_transport.
+Print Assumptions client_counter_from_validation.
+
+(* A12.g.49: checked argument and physical writer prefix. *)
+Print Assumptions checked_boss_plan_writer.
+
+(* A12.g.50: concrete surviving outer root. *)
+Print Assumptions accepted_outer_root.
+
+(* A12.g.53: conservative Image-generation knowledge in legacy states. *)
+Print Assumptions preparation_generation_not_invented.
+Print Assumptions data_command_generation_not_invented.
+Print Assumptions install_candidate_completed_preserves.
+
+(* A12.g.54: bounded absolute address and Detached installation. *)
+Print Assumptions rust_absolute_address_success.
+Print Assumptions range_numeric_offset.
+Print Assumptions test_registry_base_mapped.
+Print Assumptions pico_registry_base_mapped.
+Print Assumptions pico2_registry_base_mapped.
+Print Assumptions detached_installation_transfer.
+Print Assumptions install_detached_decoded.
+From OxideSE.Registry Require Import PreAppendValidation.
+Print Assumptions checked_boss_from_decoding.
+Print Assumptions cached_boss_does_not_compute_authentication.
+Print Assumptions cached_generation_error_is_possible.
+
+Print Assumptions reserved_decoded_candidate_distinct.
+
+(* A12.g.56: reached mapping, retained runtime authority and actual cache. *)
+Print Assumptions reset_forgets_latest.
+Print Assumptions usable_boot_latest.
+Print Assumptions acknowledged_latest.
+Print Assumptions reusable_search_extent_bound.
+Print Assumptions mapped_area_available.
+Print Assumptions admitted_offset_in_32.
+Print Assumptions prepared_preappend_gate.
+Print Assumptions remembered_installed_cache_hit.
+
+(* A12.g.57: candidate admitted from the real mapping and marker exclusion. *)
+Print Assumptions reserved_boss_after_marker.
+Print Assumptions acquired_validated_candidate.
+Print Assumptions validated_append_entry_step.
+
+(* J2: RAM observation comes from the same decoded durable range. *)
+Print Assumptions advance_allocation_observed.
+Print Assumptions allocation_from_same_decoder.
+Print Assumptions allocation_recovered_after_reset.
+Print Assumptions reset_forgets_allocation.
+
+(* J2 actual erased fallback traversal. *)
+Print Assumptions search_candidates_erased.
+Print Assumptions reusable_search_erased.
+
+(* J2: bounded decoding and RAM synchronization projections. *)
+Print Assumptions range_numeric_end.
+Print Assumptions decoded_allocation_usize.
+Print Assumptions runtime_sync_prefix_reset.
+Print Assumptions deliver_published_runtime_unchanged.
+
+(* Owner BOSS size control; no transaction safety in these numeric lemmas. *)
+Print Assumptions boss_live_count_bound.
+Print Assumptions boss_live_count_written.
+Print Assumptions boss_size_preflight_ready.
+Print Assumptions boss_size_preflight_capacity.
